@@ -1,0 +1,209 @@
+blueprint:
+  name: GoodWe & Tibber Smart Charging (Automatisiertes Laden & Eigenverbrauch)
+  description: |
+    Steuert deinen GoodWe Batteriespeicher intelligent basierend auf dynamischen Tibber-Strompreisen.
+    Der Akku wird automatisch in den günstigsten Stunden (unter Berücksichtigung eines Preis-Limits) geladen und dient sonst dem Eigenverbrauch (kein Export ins Netz).
+    
+    **Funktionen:**
+    - Erkennt die günstigsten Stunden aus Tibber-Preisen für HEUTE und MORGEN.
+    - Lädt nur, wenn der Preis unter einem einstellbaren Limit liegt.
+    - Nutzt den "Backup"-Modus zum Laden und den "General"-Modus für Eigenverbrauch.
+    - Aktiviert den GoodWe "Fast Charging Switch" während des Ladens (da das Laden auf 3.5kW begrenzt ist).
+    - Berücksichtigt die benötigte Ladedauer des Akkus (Konfiguration über Helfer).
+
+    **Voraussetzungen:**
+    - HACS GoodWe Integration (für Steuerung des Arbeitsmodus und Fast Charging Switch).
+    - Ein funktionierender Tibber REST-Sensor (`sensor.tibber_preise_prognose`), der die Attribute 'today' und 'tomorrow' liefert.
+
+  domain: automation
+  source_url: https://your-blog.de/goodwe-tibber-automation  # Optional: Hier deine Blog-URL eintragen
+  input:
+    tibber_price_sensor:
+      name: Tibber Preis Sensor (REST)
+      description: Dein Tibber Preis Sensor, der 'today' und 'tomorrow' Attribute liefert (z.B. sensor.tibber_preise_prognose).
+      selector:
+        entity:
+          domain: sensor
+          attribute: today # Nur Sensoren mit 'today' Attribut anzeigen
+    goodwe_pv_power_sensor:
+      name: GoodWe PV Power Sensor
+      description: Sensor für die aktuelle PV-Leistung deines GoodWe Wechselrichters (z.B. sensor.goodwe_pv_power).
+      selector:
+        entity:
+          domain: sensor
+          device_class: power
+    goodwe_battery_soc_sensor:
+      name: GoodWe Battery SOC Sensor
+      description: Sensor für den aktuellen Ladestand deines GoodWe Akkus in Prozent (z.B. sensor.goodwe_battery_soc).
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+    goodwe_work_mode_selector:
+      name: GoodWe Work Mode Selector
+      description: Die Entität zur Steuerung des Arbeitsmodus deines GoodWe Wechselrichters (z.B. select.goodwe_work_mode).
+      selector:
+        entity:
+          domain: select
+          integration: goodwe_inverter # Versucht, GoodWe-spezifische Selects zu finden
+    goodwe_fast_charging_switch:
+      name: GoodWe Fast Charging Switch
+      description: Der Schalter für die Schnellladefunktion deines GoodWe Wechselrichters (z.B. switch.goodwe_fast_charging_switch).
+      selector:
+        entity:
+          domain: switch
+
+mode: parallel # Ermöglicht, dass beide Automationen parallel laufen können, falls ein Trigger schnell aufeinanderfolgt.
+
+# Helfer werden automatisch generiert, wenn der Blueprint installiert wird
+# Die Automatisierungen nutzen diese Helfer.
+variables:
+  # Erstellt einen Input Boolean Helfer
+  tibber_charge_boolean: !input tibber_charge_boolean_name # Name des generierten Helfers
+  # Erstellt einen Input Number Helfer für die Anzahl der Ladestunden
+  charge_hours_input_number: !input charge_hours_input_number_name # Name des generierten Helfers
+  # Erstellt einen Input Number Helfer für den maximalen Ladepreis
+  max_price_input_number: !input max_price_input_number_name # Name des generierten Helfers
+
+trigger: [] # Der Blueprint selbst hat keine Trigger, die Automationen enthalten ihre Trigger
+
+action:
+  - alias: "Generiere oder aktualisiere Helfer und starte die Automatisierungen"
+    sequence:
+      # Hilfskonfiguration (Input Boolean für Ladestatus)
+      - service: homeassistant.set_helper
+        data:
+          entity_id: !input tibber_charge_boolean_name
+          name: "Tibber Günstige Ladestunde"
+          initial_state: false
+          type: input_boolean
+      
+      # Hilfskonfiguration (Input Number für Ladestunden)
+      - service: homeassistant.set_helper
+        data:
+          entity_id: !input charge_hours_input_number_name
+          name: "Anzahl Günstigste Ladestunden"
+          min: 1
+          max: 8
+          step: 1
+          initial_value: 3 # Standard auf 3 Stunden gesetzt (für 10kWh / 3.5kW)
+          unit_of_measurement: "Stunden"
+          type: input_number
+      
+      # Hilfskonfiguration (Input Number für Max Ladepreis)
+      - service: homeassistant.set_helper
+        data:
+          entity_id: !input max_price_input_number_name
+          name: "Tibber Max Ladepreis (€/kWh)"
+          min: 0.00
+          max: 1.00
+          step: 0.01
+          initial_value: 0.30 # Standard auf 30 Cent gesetzt
+          unit_of_measurement: "€/kWh"
+          type: input_number
+
+      # START DER ERSTEN AUTOMATION (Tibber Checker)
+      - id: tibber_price_checker_automation # Eindeutige ID für die generierte Automation
+        service: automation.trigger
+        data:
+          entity_id: !input tibber_price_checker_automation_id # Referenz auf die generierte Automation
+      
+      # START DER ZWEITEN AUTOMATION (GoodWe Steuerung)
+      - id: goodwe_control_automation # Eindeutige ID für die generierte Automation
+        service: automation.trigger
+        data:
+          entity_id: !input goodwe_control_automation_id # Referenz auf die generierte Automation
+
+# Definition der internen Automatisierungen des Blueprints
+automation:
+  # --- AUTOMATION 1: Tibber Preis Checker ---
+  - id: "{{ blueprint.id }}_tibber_checker"
+    alias: "Tibber: Stündliche Prüfung ({{ blueprint.name }})"
+    description: "Berechnet die günstigsten Stunden für Tibber-Laden und schaltet den Helfer."
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: '01'
+      - platform: homeassistant
+        event: start
+      - platform: event
+        event_type: automation_reloaded
+      - platform: state
+        entity_id: !input max_price_input_number_name # Bei Änderung des Max-Preises neu prüfen
+      - platform: state
+        entity_id: !input charge_hours_input_number_name # Bei Änderung der Ladestunden neu prüfen
+    action:
+      - variables:
+          preise_heute: "{{ state_attr(states(tibber_price_sensor), 'today') | default([]) }}"
+          preise_morgen: "{{ state_attr(states(tibber_price_sensor), 'tomorrow') | default([]) }}"
+          anzahl_stunden: "{{ states(charge_hours_input_number) | int(3) }}" # Standardwert 3
+          max_preis: "{{ states(max_price_input_number) | float(0.30) }}" # Standardwert 0.30
+          ziel_zustand: >
+            {% if (preise_morgen | length) > 0 %}
+              {% set heutte_str = now().strftime('%Y-%m-%d') %}
+              {% set morgen_str = (now() + timedelta(days=1)).strftime('%Y-%m-%d') %}
+              {% set ns = namespace(alle_preise=[]) %}
+              {% for p in preise_heute %}
+                {% set t = heutte_str ~ 'T' ~ "%02d" | format(loop.index0) ~ ':00:00' %}
+                {% set ns.alle_preise = ns.alle_preise + [{'price': p.total, 'time': t}] %}
+              {% endfor %}
+              {% for p in preise_morgen %}
+                {% set t = morgen_str ~ 'T' ~ "%02d" | format(loop.index0) ~ ':00:00' %}
+                {% set ns.alle_preise = ns.alle_preise + [{'price': p.total, 'time': t}] %}
+              {% endfor %}
+              {% set sortiert = ns.alle_preise | sort(attribute='price') %}
+              {% set top_slots = sortiert[0:anzahl_stunden] %}
+              {% set jetzt_iso = now().strftime('%Y-%m-%dT%H:00:00') %}
+              {% set aktueller_slot = top_slots | selectattr('time', 'eq', jetzt_iso) | first %}
+              {% if aktueller_slot is defined %}
+                {% if aktueller_slot.price <= max_preis %} on {% else %} off {% endif %}
+              {% else %} off {% endif %}
+            {% else %} off {% endif %}
+      - if:
+          - condition: template
+            value_template: "{{ states(tibber_charge_boolean) != ziel_zustand }}"
+        then:
+          - service: "input_boolean.turn_{{ ziel_zustand }}"
+            target:
+              entity_id: !input tibber_charge_boolean_name
+
+  # --- AUTOMATION 2: GoodWe Steuerung ---
+  - id: "{{ blueprint.id }}_goodwe_control"
+    alias: "GoodWe: Batterie-Steuerung ({{ blueprint.name }})"
+    description: "Schaltet den GoodWe Wechselrichter in den Lade- oder Eigenverbrauchsmodus."
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: !input tibber_charge_boolean_name
+      - platform: time_pattern
+        minutes: '/5'
+    action:
+      - variables:
+          ist_guenstig: "{{ is_state(tibber_charge_boolean, 'on') }}"
+          pv_leistung: "{{ states(goodwe_pv_power_sensor) | int(0) }}"
+          batterie_soc: "{{ states(goodwe_battery_soc_sensor) | int(100) }}"
+          aktueller_modus: "{{ states(goodwe_work_mode_selector) }}"
+          ziel_modus: >
+            {% if ist_guenstig and batterie_soc < 98 and pv_leistung < 100 %}
+              Backup
+            {% else %}
+              General
+            {% endif %}
+      - if:
+          - condition: template
+            value_template: "{{ aktueller_modus != ziel_modus }}"
+          - condition: template
+            value_template: "{{ ziel_modus in ['General', 'Backup'] }}"
+        then:
+          - service: select.select_option
+            target:
+              entity_id: !input goodwe_work_mode_selector
+            data:
+              option: "{{ ziel_modus }}"
+      - if:
+          - condition: template
+            value_template: "{{ is_state(goodwe_fast_charging_switch, 'off') if ziel_modus == 'Backup' else is_state(goodwe_fast_charging_switch, 'on') }}"
+        then:
+          - service: "switch.turn_{{ 'on' if ziel_modus == 'Backup' else 'off' }}"
+            target:
+              entity_id: !input goodwe_fast_charging_switch

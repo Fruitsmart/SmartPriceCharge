@@ -15,4 +15,4 @@ Dieser Blueprint erstellt automatisch die benötigten Helfer ('input_boolean' un
 - HACS GoodWe Integration (für Steuerung des Arbeitsmodus und Fast Charging Switch).
 - Ein funktionierender Tibber REST-Sensor (sensor.tibber_preise_prognose), der die Attribute 'today' und 'tomorrow' liefert.
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FFruitsmart%2FGoodWe-Tibber-Smart-Charging-Automatisiertes-Laden-Eigenverbrauch-%2Fblob%2Fmain%2Fgoodwe_tibber_smart_charging.v1.2.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FFruitsmart%2FGoodWe-Tibber-Smart-Charging-Automatisiertes-Laden-Eigenverbrauch-%2Fblob%2Fmain%2Fgoodwe_tibber_smart_charging.v1.0.3.yaml)

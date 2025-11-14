@@ -1,5 +1,5 @@
 blueprint:
-  name: GoodWe & Tibber Smart Charge (v5.10 Final Fix)
+  name: GoodWe & Tibber Smart Charge (v6.0 Final Rewrite)
   description: |
     **Intelligente Batteriesteuerung für GoodWe Wechselrichter mit Tibber**
     
@@ -215,14 +215,15 @@ action:
   # Schritt 2: Steuerung des Betriebsmodus (Laden oder Normalbetrieb)
   - choose:
       - conditions:
-          - "{{ is_current_hour_cheap }}"
-          - "{{ batterie_soc < (input_number(input('soc_full_threshold')) | float(99)) }}" 
-          - "{{ aktueller_modus != 'backup' }}"
-          - condition: or
-            conditions:
-              - "{{ v_solar_forecast_sensor == 'none' or states(v_solar_forecast_sensor) in ['unavailable', 'unknown', 'none', 'null', ''] }}"
-              - "{{ solar_forecast_value <= (input_number(input('pv_threshold_low')) | float(50)) }}" 
-              - "{{ pv_leistung <= (input_number(input('pv_threshold_low')) | float(50)) }}"         
+          - condition: template
+            value_template: >
+              {{ is_current_hour_cheap and
+                 batterie_soc < (input_number(input('soc_full_threshold')) | float(99)) and
+                 aktueller_modus != 'backup' and
+                 (v_solar_forecast_sensor == 'none' or
+                  states(v_solar_forecast_sensor) in ['unavailable', 'unknown', 'none', 'null', ''] or
+                  solar_forecast_value <= (input_number(input('pv_threshold_low')) | float(50)) or
+                  pv_leistung <= (input_number(input('pv_threshold_low')) | float(50))) }}
         sequence:
           - service: select.select_option
             target:
@@ -240,8 +241,10 @@ action:
               entity_id: !input helper_charging_from_grid_toggle
     
       - conditions:
-          - "{{ not is_current_hour_cheap }}"
-          - "{{ aktueller_modus != 'general' }}"
+          - condition: template
+            value_template: >
+              {{ not is_current_hour_cheap and
+                 aktueller_modus != 'general' }}
         sequence:
           - service: select.select_option
             target:
@@ -249,12 +252,3 @@ action:
             data:
               option: "general"
           - service: input_boolean.turn_off
-            target:
-              entity_id: !input helper_charging_from_grid_toggle
-    
-  # Schritt 3: Steuerung der Exportsperre (unabhängig vom Modus-Wechsel)
-  - choose: 
-      - conditions:
-          - "{{ aktueller_modus == 'general' }}"
-          - "{{ not export_limit_active }}"
-          - "{{ batterie_soc < (input_number(input('soc_full_threshold')) | float(99)) }}"

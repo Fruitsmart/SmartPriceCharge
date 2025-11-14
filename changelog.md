@@ -1,8 +1,13 @@
 
 ### **Changelog: GoodWe & Tibber Smart Charge Blueprint**
 
+Version 5.4 (Aktuell)
 
-**Version 5.3 (Aktuell)**
+Fehlerbehebung:
+
+Behebung eines YAML-Parsing-Fehlers (could not find expected ':'), der durch YAML-Kommentare (#) direkt innerhalb von Jinja2-Templates in der variables und action-Sektion verursacht wurde. Alle erläuternden Kommentare in diesen problematischen Bereichen wurden entfernt, um die YAML-Struktur sauber zu halten.
+
+**Version 5.3 **
 
   * **Fehlerbehebung:**
       * Behebung des `UndefinedError: 'v_charge_hours' is undefined` Fehlers. Die Jinja2-Templates in den `variables` und `conditions` greifen nun **direkt auf die `!input`-Variablen** (z.B. `!input charge_hours`, `!input pv_threshold_low`) zu. Dies eliminiert die Notwendigkeit von Zwischenvariablen und stellt sicher, dass die Werte korrekt abgerufen werden, wenn die Automation erstellt oder aktualisiert wird.
@@ -19,7 +24,7 @@
 
 ---
 
-**Version 5.0 (Aktuell)**
+**Version 5.0 **
 
 * **Neue Funktionen:**
     * **Status-Helfer integriert:** Zwei neue `input` Optionen für Helfer hinzugefügt:

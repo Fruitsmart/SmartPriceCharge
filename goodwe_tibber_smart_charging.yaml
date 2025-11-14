@@ -19,7 +19,7 @@ blueprint:
     1.  **Text Helfer für günstigste Stunden:**
         - Typ: Text
         - Name: z.B. `Günstigste Ladestunden`
-        - Entitäts-ID: z.B. `input_text.gunstigsten_ladestunden`
+        - Entitäts-ID: z.b. `input_text.gunstigsten_ladestunden`
     2.  **Boolean Helfer für Ladevorgang aus Netz:**
         - Typ: Umschalter
         - Name: z.B. `Akku lädt aus Netz`
@@ -86,8 +86,6 @@ blueprint:
       selector:
         entity:
           domain: sensor
-          # Hier keine device_class, da Forecast-Sensoren variieren können
-          multiple: false
     charge_hours:
       name: Anzahl der günstigsten Ladestunden
       description: Wie viele der günstigsten Stunden Tibbers zum Laden genutzt werden sollen.
@@ -129,11 +127,11 @@ blueprint:
           step: 1
           unit_of_measurement: "%"
 
-mode: queued # Wichtig, damit nicht mehrere Instanzen gleichzeitig laufen
+mode: queued
 
 trigger:
   - platform: time_pattern
-    minutes: "0" # Löst jede Stunde zur 0. Minute aus
+    minutes: "0"
 
   - platform: state
     entity_id: !input battery_soc_sensor
@@ -153,7 +151,7 @@ trigger:
     for: "00:00:30"
 
   - platform: state
-    entity_id: !input solar_forecast_sensor # Dieser Trigger wird ignoriert, wenn Input 'none' ist
+    entity_id: !input solar_forecast_sensor
 
 action:
   - variables:
@@ -230,11 +228,11 @@ action:
         {{ hours_list | join(', ') if hours_list | length > 0 else 'N/A' }}
 
   # Schritt 1: Aktualisiere den Text-Helfer mit den günstigsten Stunden
-  - target:
+  - service: input_text.set_value
+    target:
       entity_id: "{{ v_helper_cheapest_hours_text }}"
     data:
       value: "{{ formatted_cheapest_hours }}"
-    action: input_text.set_value
 
   # Schritt 2: Steuerung des Betriebsmodus (Laden oder Normalbetrieb)
   - choose:
@@ -249,21 +247,21 @@ action:
                   solar_forecast_value <= (pv_threshold_low_input | float(50)) or
                   pv_leistung <= (pv_threshold_low_input | float(50))) }}
         sequence:
-          - target:
+          - service: select.select_option
+            target:
               entity_id: "{{ v_work_mode_selector }}"
             data:
               option: "backup"
-            action: select.select_option
           - if:
               - condition: template
                 value_template: "{{ export_limit_active }}"
             then:
-              - target:
+              - service: switch.turn_off
+                target:
                   entity_id: "{{ v_export_limit_switch }}"
-                action: switch.turn_off
-          - target:
+          - service: input_boolean.turn_on
+            target:
               entity_id: "{{ v_helper_charging_from_grid_toggle }}"
-            action: input_boolean.turn_on
     
       - conditions:
           - condition: template
@@ -271,20 +269,19 @@ action:
               {{ not is_current_hour_cheap and
                  aktueller_modus != 'general' }}
         sequence:
-          - target:
+          - service: select.select_option
+            target:
               entity_id: "{{ v_work_mode_selector }}"
             data:
               option: general
-            action: select.select_option
-          - target:
+          - service: input_boolean.turn_off
+            target:
               entity_id: "{{ v_helper_charging_from_grid_toggle }}"
-            action: input_boolean.turn_off
-      default:
-        - action: input_boolean.turn_off
-          metadata: {}
-          data: {}
+      default: # Hier beginnt der Default-Block für den ersten Choose-Block
+        - service: input_boolean.turn_off
           target:
             entity_id: "{{ v_helper_charging_from_grid_toggle }}"
+          # data: {}  <-- Entfernt, da es manchmal zu Parser-Problemen führt und optional ist
     
   # Schritt 3: Steuerung der Exportsperre (unabhängig vom Modus-Wechsel)
   - choose: 
@@ -296,9 +293,9 @@ action:
                  batterie_soc < (soc_full_threshold_input | float(99)) and
                  pv_leistung <= (pv_threshold_low_input | float(50)) }}
         sequence:
-          - target:
+          - service: switch.turn_on
+            target:
               entity_id: "{{ v_export_limit_switch }}"
-            action: switch.turn_on
 
       - conditions:
           - condition: template
@@ -308,12 +305,11 @@ action:
                  (batterie_soc >= (soc_full_threshold_input | float(99)) or 
                   pv_leistung > (pv_threshold_high_input | float(50))) }}
         sequence: 
-          - target:
+          - service: switch.turn_off
+            target:
               entity_id: "{{ v_export_limit_switch }}"
-            action: switch.turn_off
-      default:
-        - action: switch.turn_off
-          metadata: {}
-          data: {}
+      default: # Hier beginnt der Default-Block für den zweiten Choose-Block
+        - service: switch.turn_off
           target:
             entity_id: "{{ v_export_limit_switch }}"
+          # data: {}  <-- Entfernt, da es manchmal zu Parser-Problemen führt und optional ist

@@ -1,5 +1,5 @@
 blueprint:
-  name: GoodWe & Tibber Smart Charge (v5.8 Final Fix)
+  name: GoodWe & Tibber Smart Charge (v5.9 Final Fix)
   description: |
     **Intelligente Batteriesteuerung für GoodWe Wechselrichter mit Tibber**
     
@@ -127,3 +127,153 @@ trigger:
     entity_id:
       - !input pv_power_sensor
       - !input battery_soc_sensor
+      - !input goodwe_work_mode_selector
+      - !input goodwe_export_limit_switch
+      - !input solar_forecast_sensor
+      - !input tibber_price_data_sensor
+
+variables:
+  v_tibber_sensor: !input tibber_price_data_sensor
+  v_pv_power_sensor: !input pv_power_sensor
+  v_battery_soc_sensor: !input battery_soc_sensor
+  v_work_mode_selector: !input goodwe_work_mode_selector
+  v_export_limit_switch: !input goodwe_export_limit_switch
+  v_solar_forecast_sensor: !input solar_forecast_sensor
+  v_helper_cheapest_hours_text: !input helper_cheapest_hours_text
+  v_helper_charging_from_grid_toggle: !input helper_charging_from_grid_toggle
+  
+  pv_leistung: "{{ states(v_pv_power_sensor) | float(0) }}"
+  batterie_soc: "{{ states(v_battery_soc_sensor) | float(100) }}"
+  aktueller_modus: "{{ states(v_work_mode_selector) }}"
+  export_limit_active: "{{ is_state(v_export_limit_switch, 'on') }}"
+  
+  solar_forecast_value: >
+    {% set forecast_state = states(v_solar_forecast_sensor) %}
+    {% if forecast_state is not none and forecast_state not in ['unavailable', 'unknown', 'none', 'null', ''] %}
+      {{ forecast_state | float(0) }}
+    {% else %}
+      {{ 0 }}
+    {% endif %}
+
+  current_time: "{{ now() }}"
+  tibber_raw_prices: "{{ state_attr(v_tibber_sensor, 'tibber_data') | default({'today': [], 'tomorrow': []}) }}"
+
+  combined_prices_with_time: >
+    {% set prices = [] %}
+    {% set today_prices = tibber_raw_prices.today | default([]) %}
+    {% set tomorrow_prices = tibber_raw_prices.tomorrow | default([]) %}
+    
+    {% for i in range(24) %}
+      {% set price_time = current_time.replace(hour=i, minute=0, second=0, microsecond=0) %}
+      {% if price_time >= current_time.replace(minute=0, second=0, microsecond=0) %}
+        {% if today_prices is not none and i < today_prices | length and today_prices[i].total is not none %}
+          {% set success = prices.append({'time': price_time, 'price': today_prices[i].total}) %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+
+    {% set next_day = current_time + timedelta(days=1) %}
+    {% for i in range(24) %}
+      {% set price_time = next_day.replace(hour=i, minute=0, second=0, microsecond=0) %}
+      {% if tomorrow_prices is not none and i < tomorrow_prices | length and tomorrow_prices[i].total is not none %}
+        {% set success = prices.append({'time': price_time, 'price': tomorrow_prices[i].total}) %}
+      {% endif %}
+    {% endfor %}
+    {{ prices }}
+
+  cheapest_hours_info: >
+    {% set sorted_prices = combined_prices_with_time | sort(attribute='price') %}
+    {% set num_to_select = [ (input_number(input('charge_hours')) | int(3)), sorted_prices | length] | min %} 
+    {{ sorted_prices[:num_to_select] }}
+
+  is_current_hour_cheap: >
+    {% set current_hour_start = current_time.replace(minute=0, second=0, microsecond=0) %}
+    {% set is_cheap = false %}
+    {% for hour_info in cheapest_hours_info %}
+      {% if hour_info.time == current_hour_start %}
+        {% set is_cheap = true %}
+        {% break %}
+      {% endif %}
+    {% endfor %}
+    {{ is_cheap }}
+
+  formatted_cheapest_hours: >
+    {% set hours_list = [] %}
+    {% for hour_info in cheapest_hours_info %}
+      {% set success = hours_list.append(hour_info.time.strftime('%H:%M')) %}
+    {% endfor %}
+    {{ hours_list | join(', ') if hours_list | length > 0 else 'N/A' }}
+
+action:
+  # Schritt 1: Aktualisiere den Text-Helfer mit den günstigsten Stunden
+  - service: input_text.set_value
+    target:
+      entity_id: !input helper_cheapest_hours_text
+    data:
+      value: "{{ formatted_cheapest_hours }}"
+
+  # Schritt 2: Steuerung des Betriebsmodus (Laden oder Normalbetrieb)
+  - choose:
+      - conditions:
+          - "{{ is_current_hour_cheap }}"
+          - "{{ batterie_soc < (input_number(input('soc_full_threshold')) | float(99)) }}" 
+          - "{{ aktueller_modus != 'backup' }}"
+          - condition: or
+            conditions:
+              - "{{ v_solar_forecast_sensor == 'none' or states(v_solar_forecast_sensor) in ['unavailable', 'unknown', 'none', 'null', ''] }}"
+              - "{{ solar_forecast_value <= (input_number(input('pv_threshold_low')) | float(50)) }}" 
+              - "{{ pv_leistung <= (input_number(input('pv_threshold_low')) | float(50)) }}"         
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input goodwe_work_mode_selector
+            data:
+              option: "backup"
+          - if:
+              - "{{ export_limit_active }}"
+            then:
+              - service: switch.turn_off
+                target:
+                  entity_id: !input goodwe_export_limit_switch
+          - service: input_boolean.turn_on
+            target:
+              entity_id: !input helper_charging_from_grid_toggle
+    
+      - conditions:
+          - "{{ not is_current_hour_cheap }}"
+          - "{{ aktueller_modus != 'general' }}"
+        sequence:
+          - service: select.select_option
+            target:
+              entity_id: !input goodwe_work_mode_selector
+            data:
+              option: "general"
+          - service: input_boolean.turn_off
+            target:
+              entity_id: !input helper_charging_from_grid_toggle
+    
+  # Schritt 3: Steuerung der Exportsperre (unabhängig vom Modus-Wechsel)
+  - choose: 
+      - conditions:
+          - "{{ aktueller_modus == 'general' }}"
+          - "{{ not export_limit_active }}"
+          - "{{ batterie_soc < (input_number(input('soc_full_threshold')) | float(99)) }}" 
+          - "{{ pv_leistung <= (input_number(input('pv_threshold_low')) | float(50)) }}" 
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input goodwe_export_limit_switch
+
+      - conditions:
+          - "{{ aktueller_modus == 'general' }}"
+          - "{{ export_limit_active }}"
+          - condition: or
+            conditions:
+              - condition: template 
+                value_template: "{{ batterie_soc >= (input_number(input('soc_full_threshold')) | float(99)) }}" 
+              - condition: template 
+                value_template: "{{ pv_leistung > (input_number(input('pv_threshold_high')) | float(50)) }}" 
+        sequence: 
+          - service: switch.turn_off
+            target:
+              entity_id: !input goodwe_export_limit_switch

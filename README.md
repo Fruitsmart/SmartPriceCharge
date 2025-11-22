@@ -1,3 +1,11 @@
+Guter Fang\! Das habe ich in der Tabelle tatsächlich vergessen (und beim `ladeziel_soc` hatte ich den Namen falsch kopiert).
+
+Zusätzlich habe ich die **Tracking-Helfer** jetzt auch explizit aufgelistet. Bisher stand da nur ein Hinweis, dass man sie braucht. Für eine vollständige Dokumentation ist es besser, sie alle aufzuführen, damit man sie einfach abarbeiten kann.
+
+Hier ist die **korrigierte und vollständige README.md**.
+
+-----
+
 # 🔋 TibberSmartCharge für Home Assistant (AppDaemon)
 
 **Intelligente Batteriesteuerung für dynamische Strompreise (Tibber) & PV-Überschuss – Optimiert für Nulleinspeisung/Eigenverbrauch.**
@@ -21,7 +29,7 @@ Dieses AppDaemon-Skript verwandelt deinen Heimspeicher in einen intelligenten St
 
 1.  **Home Assistant** (installiert und laufend).
 2.  **AppDaemon** Add-on in Home Assistant.
-3.  **Tibber API Token** (erhältlich auf https://developer.tibber.com/).
+3.  **Tibber API Token** (erhältlich auf https://www.google.com/search?q=developer.tibber.com).
 4.  **Wechselrichter Integration** (getestet mit GoodWe, benötigt Entitäten zum Umschalten des Betriebsmodus).
 5.  **Solar Forecast** (z.B. Solcast oder Forecast.Solar) für die Sensoren.
 
@@ -68,23 +76,43 @@ Erstelle eine Datei namens `tibber_smart_charge.py` im Verzeichnis `/config/appd
 
 ### 4\. Helfer erstellen (Input Helper)
 
-Damit das Skript konfigurierbar ist, musst du in Home Assistant unter **Einstellungen -\> Geräte & Dienste -\> Helfer** folgende Entitäten erstellen:
+Damit das Skript funktioniert, musst du in Home Assistant unter **Einstellungen -\> Geräte & Dienste -\> Helfer** folgende Entitäten erstellen:
 
-| Typ | Name (Beispiel) | Entity ID (Beispiel) | Beschreibung |
+#### A) Steuerungs-Helfer (Notwendig)
+
+| Typ | Name (Beispiel) | Entity ID | Beschreibung |
 | :--- | :--- | :--- | :--- |
-| **Schalter** | Tibber App Aktiv | `input_boolean.tibber_smart_charge_app_aktiv` | Hauptschalter für die Automatisierung |
-| **Nummer** | Batteriekapazität | `input_number.batteriekapazitaet_kwh` | Größe deines Akkus (z.B. 10.0) |
-| **Nummer** | Ladeleistung | `input_number.ladeziel_soc_prozent` | Bis wie viel % soll geladen werden? |
-| **Nummer** | Entladeschwelle | `input_number.tibber_entladeschwelle_eur_per_kwh` | Preis, ab dem entladen werden darf (z.B. 0.30) |
-| **Nummer** | Referenzpreis | `input_number.referenz_strompreis...` | Vergleichspreis für Ersparnis-Rechnung |
-| **Text** | Status | `input_text.tibber_smart_charge_status` | Zeigt an, was die App gerade macht |
-| **Text** | Monatsbericht | `input_text.tibber_smart_charge_monatsbericht` | Statistik-Ausgabe |
+| **Schalter** | Tibber App Aktiv | `input_boolean.tibber_smart_charge_app_aktiv` | Hauptschalter |
+| **Schalter** | Günstige Ladestunde | `input_boolean.tibber_guenstige_ladestunde` | Zeigt an, ob gerade geladen wird (Read-Only) |
+| **Nummer** | Batteriekapazität | `input_number.batteriekapazitaet_kwh` | Größe des Akkus in kWh |
+| **Nummer** | Ladeleistung | `input_number.ladeleistung_kw` | Max. AC-Ladeleistung (z.B. 3.0) |
+| **Nummer** | Ladeziel SoC | `input_number.ladeziel_soc_prozent` | Bis wie viel % soll geladen werden? |
+| **Nummer** | Entladeschwelle | `input_number.tibber_entladeschwelle_eur_per_kwh` | Preis, ab dem entladen werden darf |
+| **Nummer** | Referenzpreis | `input_number.referenz_strompreis_ohne_optimierung_eur_per_kwh` | Vergleichspreis für Statistik |
+| **Nummer** | Max Ladestunden | `input_number.anzahl_guenstigste_ladestunden` | Begrenzung der Ladedauer (z.B. 16) |
+| **Text** | Status | `input_text.tibber_smart_charge_status` | Zeigt aktuellen Status an |
+| **Text** | Monatsbericht | `input_text.tibber_smart_charge_monatsbericht` | Statistik-Text |
 
-*(Zusätzlich benötigst du Helfer für die Statistik-Zahlen, siehe `apps.yaml` Konfiguration)*
+#### B) Statistik-Helfer (Für das Dashboard)
+
+Erstelle diese als **Nummer (Input Number)**:
+
+  * `input_number.tibber_smart_charge_kosten_monat`
+  * `input_number.tibber_smart_charge_ersparnis_monat`
+  * `input_number.tibber_smart_discharge_ersparnis_monat`
+  * `input_number.tibber_smart_charge_geladene_kwh_monat`
+  * `input_number.tibber_smart_pv_savings_monat`
+  * `input_number.tibber_smart_charge_kosten_gesamt`
+  * `input_number.tibber_charge_ersparnis_lifetime_final`
+  * `input_number.tibber_smart_discharge_ersparnis_gesamt`
+  * `input_number.tibber_smart_charge_geladene_kwh_gesamt`
+  * `input_number.tibber_smart_pv_savings_gesamt`
+
+*(Tipp: Du kannst die Namen anpassen, musst sie dann aber auch in der `apps.yaml` ändern).*
 
 ### 5\. Konfiguration (apps.yaml)
 
-Öffne die Datei `/addon_configs/a0d7b954_appdaemon/apps/apps.yaml` und füge folgenden Block ein. **Verweise bei `tibber_price_sensor_id` auf den oben erstellten REST-Sensor\!**
+Öffne die Datei `/config/appdaemon/apps/apps.yaml` und füge folgenden Block ein.
 
 ```yaml
 tibber_smart_charge:
@@ -96,11 +124,11 @@ tibber_smart_charge:
   current_soc_sensor_id: sensor.battery_state_of_charge
   goodwe_operation_mode_entity_id: select.inverter_operation_mode
   
-  # --- PV Prognosen (Wichtig!) ---
+  # --- PV Prognosen ---
   pv_forecast_sensor_id: sensor.energy_next_hour
   pv_forecast_current_hour_sensor_id: sensor.energy_current_hour
   pv_forecast_today_remaining_sensor_id: sensor.energy_production_today_remaining
-  pv_peak_time_sensor_id: sensor.power_highest_peak_time_today # ISO Format Zeitstempel
+  pv_peak_time_sensor_id: sensor.power_highest_peak_time_today # ISO Format
   
   # --- Power Sensoren ---
   current_pv_power_sensor_id: sensor.pv_power
@@ -119,6 +147,8 @@ tibber_smart_charge:
   ladeziel_soc_prozent_id: input_number.ladeziel_soc_prozent
   tibber_discharge_threshold_eur_per_kwh_id: input_number.tibber_entladeschwelle_eur_per_kwh
   min_soc_for_discharge_prozent_id: number.depth_of_discharge_on_grid # Oder Input Number
+  charge_intervals_input_id: input_number.anzahl_guenstigste_ladestunden
+  referenz_strompreis_id: input_number.referenz_strompreis_ohne_optimierung_eur_per_kwh
   
   # --- Status & Tracking ---
   dashboard_status_text_id: input_text.tibber_smart_charge_status
@@ -128,14 +158,13 @@ tibber_smart_charge:
   cheap_hours_text_id: input_text.gunstigsten_ladestunden
   monatsbericht_id: input_text.tibber_smart_charge_monatsbericht
 
-  # Tracking Nummern (Erstelle diese Helfer für Statistiken)
+  # Tracking Nummern
   kosten_monat_id: input_number.tibber_smart_charge_kosten_monat
   ersparnis_monat_id: input_number.tibber_smart_charge_ersparnis_monat
   discharge_ersparnis_monat_id: input_number.tibber_smart_discharge_ersparnis_monat
   geladene_kwh_monat_id: input_number.tibber_smart_charge_geladene_kwh_monat
   pv_savings_monat_id: input_number.tibber_smart_pv_savings_monat
   
-  # Gesamt Statistiken
   kosten_gesamt_id: input_number.tibber_smart_charge_kosten_gesamt
   ersparnis_gesamt_id: input_number.tibber_charge_ersparnis_lifetime_final
   discharge_ersparnis_gesamt_id: input_number.tibber_smart_discharge_ersparnis_gesamt

@@ -231,3 +231,7 @@ content: >-
 ## ⚠️ Haftungsausschluss
 
 Die Nutzung dieses Skripts erfolgt auf eigene Gefahr. Es greift aktiv in die Steuerung deines Wechselrichters ein. Obwohl Sicherheitsmechanismen (wie der Debug-Mode und Heartbeat) integriert sind, übernehme ich keine Haftung für entladene Batterien zur falschen Zeit, unerwartete Stromkosten oder Hardware-Probleme. Bitte teste die Konfiguration zunächst mit `debug_mode: true`.
+
+## 📄 Lizenz
+
+Dieses Projekt ist unter der MIT-Lizenz lizenziert - siehe die [LICENSE](LICENSE) Datei für Details.

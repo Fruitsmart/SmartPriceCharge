@@ -1,9 +1,3 @@
-Hier ist eine professionelle und vollständige `README.md` für dein GitHub-Repository. Sie ist auf Deutsch verfasst, da dies deine Arbeitssprache ist, aber so strukturiert, dass sie internationalen Standards entspricht.
-
-Du kannst diesen Text einfach kopieren und als `README.md` in deinem Repository speichern.
-
------
-
 # 🔋 TibberSmartCharge für Home Assistant (AppDaemon)
 
 **Intelligente Batteriesteuerung für dynamische Strompreise (Tibber) & PV-Überschuss – Optimiert für Nulleinspeisung/Eigenverbrauch.**

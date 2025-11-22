@@ -1,11 +1,3 @@
-Guter Fang\! Das habe ich in der Tabelle tatsächlich vergessen (und beim `ladeziel_soc` hatte ich den Namen falsch kopiert).
-
-Zusätzlich habe ich die **Tracking-Helfer** jetzt auch explizit aufgelistet. Bisher stand da nur ein Hinweis, dass man sie braucht. Für eine vollständige Dokumentation ist es besser, sie alle aufzuführen, damit man sie einfach abarbeiten kann.
-
-Hier ist die **korrigierte und vollständige README.md**.
-
------
-
 # 🔋 TibberSmartCharge für Home Assistant (AppDaemon)
 
 **Intelligente Batteriesteuerung für dynamische Strompreise (Tibber) & PV-Überschuss – Optimiert für Nulleinspeisung/Eigenverbrauch.**

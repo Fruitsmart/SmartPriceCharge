@@ -84,7 +84,7 @@ Damit das Skript konfigurierbar ist, musst du in Home Assistant unter **Einstell
 
 ### 5\. Konfiguration (apps.yaml)
 
-Öffne die Datei `/config/appdaemon/apps/apps.yaml` und füge folgenden Block ein. **Verweise bei `tibber_price_sensor_id` auf den oben erstellten REST-Sensor\!**
+Öffne die Datei `/addon_configs/a0d7b954_appdaemon/apps/apps.yaml` und füge folgenden Block ein. **Verweise bei `tibber_price_sensor_id` auf den oben erstellten REST-Sensor\!**
 
 ```yaml
 tibber_smart_charge:

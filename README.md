@@ -228,6 +228,14 @@ content: >-
 
 -----
 
+---
+
+## ❤️ Unterstützung
+
+Gefällt dir dieses Projekt? Wenn es dir hilft, Stromkosten zu sparen, freue ich mich über einen Kaffee ☕️
+
+[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=fam.obst@live.de&item_name=TibberSmartCharge&currency_code=EUR)
+
 ## ⚠️ Haftungsausschluss
 
 Die Nutzung dieses Skripts erfolgt auf eigene Gefahr. Es greift aktiv in die Steuerung deines Wechselrichters ein. Obwohl Sicherheitsmechanismen (wie der Debug-Mode und Heartbeat) integriert sind, übernehme ich keine Haftung für entladene Batterien zur falschen Zeit, unerwartete Stromkosten oder Hardware-Probleme. Bitte teste die Konfiguration zunächst mit `debug_mode: true`.

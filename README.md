@@ -22,7 +22,7 @@ Dieses AppDaemon-Skript verwandelt deinen Heimspeicher in einen intelligenten St
 1.  **Home Assistant** (installiert und laufend).
 2.  **AppDaemon** Add-on in Home Assistant.
 3.  **Tibber API Token** (erhältlich auf https://www.google.com/search?q=developer.tibber.com).
-4.  **Wechselrichter Integration** (getestet mit GoodWe, benötigt Entitäten zum Umschalten des Betriebsmodus).
+4.  **Wechselrichter Integration ** (getestet mit GoodWe (HACS), benötigt Entitäten zum Umschalten des Betriebsmodus).
 5.  **Solar Forecast** (z.B. Solcast oder Forecast.Solar) für die Sensoren.
 
 -----

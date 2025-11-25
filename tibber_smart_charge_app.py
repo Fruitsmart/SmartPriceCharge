@@ -6,7 +6,7 @@ import math
 class TibberSmartCharge(hass.Hass):
 
     def initialize(self):
-        self.log("Initializing TibberSmartCharge App - Version 102 (Fully Configurable Dynamic Spread)...", level="INFO")
+        self.log("Initializing TibberSmartCharge App - Version 1.1b (Configurable Dynamic Spread)...", level="INFO")
 
         # --- 1. KONFIGURATION: IDs ---
         self.tibber_price_sensor_id = self.args['tibber_price_sensor_id']
@@ -41,7 +41,7 @@ class TibberSmartCharge(hass.Hass):
         self.min_cycle_profit_eur = float(self.args.get('min_cycle_profit_eur', 0.02))
         self.efficiency_factor = float(self.args.get('battery_efficiency_factor', 0.90))
 
-        # DYNAMIC SPREAD KONFIGURATION (Neu in V102)
+        # DYNAMIC SPREAD KONFIGURATION (Neu in v1.1b)
         # Basis Spread (für SoC < Medium)
         self.base_min_price_spread_eur = float(self.args.get('min_price_spread_eur', 0.08))
         
@@ -310,7 +310,7 @@ class TibberSmartCharge(hass.Hass):
              self._set_error_states('N/A - Keine Intervalle')
              return
         
-        # --- PREISANALYSE (Dynamischer Spread V102) ---
+        # --- PREISANALYSE (Dynamischer Spread v1.1b) ---
         max_future_price = 0.0
         peak_time_dt = None
         if all_15min_prices:
@@ -325,12 +325,9 @@ class TibberSmartCharge(hass.Hass):
         effective_min_spread = self.base_min_price_spread_eur
         
         if current_soc_prozent > self.soc_threshold_high:
-            # Sehr voller Akku -> Sehr locker
             effective_min_spread = max(effective_min_spread, self.spread_high_soc_eur)
             self._log_debug(f"DynSpread: SoC > {self.soc_threshold_high}% -> Spread {effective_min_spread:.2f}", level="DEBUG")
-            
         elif current_soc_prozent > self.soc_threshold_medium:
-            # Voller Akku -> Lockerer
             effective_min_spread = max(effective_min_spread, self.spread_medium_soc_eur)
             self._log_debug(f"DynSpread: SoC > {self.soc_threshold_medium}% -> Spread {effective_min_spread:.2f}", level="DEBUG")
         
@@ -439,7 +436,7 @@ class TibberSmartCharge(hass.Hass):
 
         # PRIO 2: GÜNSTIG LADEN
         elif app_is_enabled and current_soc_prozent < ladeziel_soc_prozent and (current_time_in_best_block or is_panic_mode):
-            is_relative_dip = (current_spread >= self.base_min_price_spread_eur) # Hier gilt immer Basis
+            is_relative_dip = (current_spread >= self.base_min_price_spread_eur) # Basis Spread gilt hier
             if current_time_in_best_block or is_panic_mode: allowed_to_charge = True
             else: allowed_to_charge = (current_tibber_price <= tibber_entladeschwelle_eur_per_kwh) or is_relative_dip
             

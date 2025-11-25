@@ -134,7 +134,18 @@ tibber_smart_charge:
   # --- Einstellungen ---
   battery_efficiency_factor: 0.90
   pv_forecast_safety_factor: 0.50
-  min_price_spread_eur: 0.08 # Mindestabstand zum Peak, um "Hold" zu aktivieren
+
+  # --- Dynamische Spread Steuerung ---
+  # Basis Spread (Gilt bei niedrigem Akkustand)
+  min_price_spread_eur: 0.08
+  
+  # Stufe 1: Akku wird voller
+  soc_threshold_medium: 80.0        # Ab 80% SoC...
+  spread_medium_soc_eur: 0.15       # ...genügen 15 Cent Abstand (statt 8)
+  
+  # Stufe 2: Akku ist fast voll
+  soc_threshold_high: 95.0          # Ab 95% SoC...
+  spread_high_soc_eur: 0.25         # ...genügen 25 Cent Abstand (Akku muss leer werden!)
   
   # --- Verknüpfung zu deinen Helfern ---
   battery_capacity_kwh_id: input_number.batteriekapazitaet_kwh

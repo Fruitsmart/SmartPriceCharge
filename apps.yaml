@@ -1,70 +1,66 @@
-tibber_smart_charge:
-  module: tibber_smart_charge_app
-  class: TibberSmartCharge
+smart_price_charge:
+  module: smart_price_charge
+  class: SmartPriceCharge
   
-  # --- Live Sensoren ---
-  tibber_price_sensor_id: sensor.tibber_preise_vorhersage_rest # Dein neuer REST Sensor
+  # --- Sensoren (Mapping auf deine existierenden Entitäten) ---
+  price_sensor_id: sensor.tibber_preise_vorhersage_rest 
   current_soc_sensor_id: sensor.battery_state_of_charge
-  goodwe_operation_mode_entity_id: select.inverter_operation_mode
+  inverter_mode_entity_id: select.inverter_operation_mode
   
-  # --- PV Prognosen ---
+  # PV
   pv_forecast_sensor_id: sensor.energy_next_hour
   pv_forecast_current_hour_sensor_id: sensor.energy_current_hour
   pv_forecast_today_remaining_sensor_id: sensor.energy_production_today_remaining
-  pv_peak_time_sensor_id: sensor.power_highest_peak_time_today # ISO Format
+  pv_peak_time_sensor_id: sensor.power_highest_peak_time_today
   
-  # --- Power Sensoren ---
+  # Power
   current_pv_power_sensor_id: sensor.pv_power
   battery_power_sensor_id: sensor.battery_power
   grid_power_import_export_sensor_id: sensor.active_power_total
   current_house_consumption_w_id: sensor.house_consumption
 
-  # --- Einstellungen ---
+  # --- Settings ---
   battery_efficiency_factor: 0.90
   pv_forecast_safety_factor: 0.50
-  # --- Dynamische Spread Steuerung ---
-  # Basis Spread (Gilt bei niedrigem Akkustand)
+  min_cycle_profit_eur: 0.02
+  
+  # Dynamic Spread (v1.2)
   min_price_spread_eur: 0.08
+  soc_threshold_medium: 80.0
+  spread_medium_soc_eur: 0.15
+  soc_threshold_high: 95.0
+  spread_high_soc_eur: 0.25
   
-  # Stufe 1: Akku wird voller
-  soc_threshold_medium: 80.0        # Ab 80% SoC...
-  spread_medium_soc_eur: 0.15       # ...genügen 15 Cent Abstand (statt 8)
-  
-  # Stufe 2: Akku ist fast voll
-  soc_threshold_high: 95.0          # Ab 95% SoC...
-  spread_high_soc_eur: 0.25         # ...genügen 25 Cent Abstand (Akku muss leer werden!)
-  
-  # --- Verknüpfung zu deinen Helfern ---
+  # --- Helfer Mapping (Hier stehen deine gewohnten Namen!) ---
   battery_capacity_kwh_id: input_number.batteriekapazitaet_kwh
   charger_power_kw_id: input_number.ladeleistung_kw
-  ladeziel_soc_prozent_id: input_number.ladeziel_soc_prozent
-  tibber_discharge_threshold_eur_per_kwh_id: input_number.tibber_entladeschwelle_eur_per_kwh
-  min_soc_for_discharge_prozent_id: number.depth_of_discharge_on_grid # Oder Input Number
+  target_soc_id: input_number.ladeziel_soc_prozent
+  price_discharge_threshold_id: input_number.tibber_entladeschwelle_eur_per_kwh
+  min_soc_discharge_id: number.depth_of_discharge_on_grid
+  reference_price_id: input_number.referenz_strompreis_ohne_optimierung_eur_per_kwh
   charge_intervals_input_id: input_number.anzahl_guenstigste_ladestunden
-  referenz_strompreis_id: input_number.referenz_strompreis_ohne_optimierung_eur_per_kwh
   
-  # --- Status & Tracking ---
+  # Status Helfer (Ich habe die alten Namen behalten, damit du nichts ändern musst)
   dashboard_status_text_id: input_text.tibber_smart_charge_status
   app_enabled_switch_id: input_boolean.tibber_smart_charge_app_aktiv
   cheap_hour_toggle_id: input_boolean.tibber_guenstige_ladestunde
   next_charge_time_id: input_text.tibber_next_charge_time
   cheap_hours_text_id: input_text.gunstigsten_ladestunden
-  monatsbericht_id: input_text.tibber_smart_charge_monatsbericht
+  report_id: input_text.tibber_smart_charge_monatsbericht
 
-  # Tracking Nummern
-  kosten_monat_id: input_number.tibber_smart_charge_kosten_monat
-  ersparnis_monat_id: input_number.tibber_smart_charge_ersparnis_monat
-  discharge_ersparnis_monat_id: input_number.tibber_smart_discharge_ersparnis_monat
-  geladene_kwh_monat_id: input_number.tibber_smart_charge_geladene_kwh_monat
-  pv_savings_monat_id: input_number.tibber_smart_pv_savings_monat
+  # Tracking Helfer (Alte Namen)
+  cost_month_id: input_number.tibber_smart_charge_kosten_monat
+  savings_month_id: input_number.tibber_smart_charge_ersparnis_monat
+  discharge_savings_month_id: input_number.tibber_smart_discharge_ersparnis_monat
+  charged_kwh_month_id: input_number.tibber_smart_charge_geladene_kwh_monat
+  pv_savings_month_id: input_number.tibber_smart_pv_savings_monat
   
-  kosten_gesamt_id: input_number.tibber_smart_charge_kosten_gesamt
-  ersparnis_gesamt_id: input_number.tibber_charge_ersparnis_lifetime_final
-  discharge_ersparnis_gesamt_id: input_number.tibber_smart_discharge_ersparnis_gesamt
-  geladene_kwh_gesamt_id: input_number.tibber_smart_charge_geladene_kwh_gesamt
-  pv_savings_gesamt_id: input_number.tibber_smart_pv_savings_gesamt
+  cost_total_id: input_number.tibber_smart_charge_kosten_gesamt
+  savings_total_id: input_number.tibber_charge_ersparnis_lifetime_final
+  discharge_savings_total_id: input_number.tibber_smart_discharge_ersparnis_gesamt
+  charged_kwh_total_id: input_number.tibber_smart_charge_geladene_kwh_gesamt
+  pv_savings_total_id: input_number.tibber_smart_pv_savings_gesamt
 
-  # --- Debugging ---
-  debug_mode: false # false = Inverter schaltet wirklich! true = Simulation
+  # Debug
+  debug_mode: false
   log_debug_level: true
-

@@ -12,7 +12,6 @@ Dieses AppDaemon-Skript verwandelt deinen Heimspeicher in einen intelligenten St
       * 🔋 **Akku voll:** Die Logik wird "lockerer" und nutzt den Akku auch bei mittelhohen Preisen, um Energieverschwendung zu vermeiden.
       * 🪫 **Akku leer:** Die Logik bleibt "streng" und spart die verbleibende Energie exklusiv für den absoluten Preis-Peak des Tages auf.
   * **📉 Günstig Laden (Eco Charge):** Lädt den Akku automatisch aus dem Netz, wenn der Strompreis sehr niedrig ist und die PV-Prognose für den Tag nicht ausreicht.
-  * **🛑 Smart Hold (Spread-Logik):** Verhindert das Entladen des Akkus bei "mittleren" Preisen, wenn später am Tag ein extremer Preis-Peak erwartet wird. Der Akku wird für die teuerste Zeit "aufgespart".
   * **☀️ Multi-Forecast PV-Integration:** Nutzt drei verschiedene Prognose-Werte (Aktuelle Stunde, Nächste Stunde, Rest des Tages) sowie einen Peak-Time-Sensor, um Wolkenphasen zu überbrücken und unnötiges Netzladen zu verhindern.
   * **💰 Kosten-Tracking:** Berechnet live die Ersparnis gegenüber einem Referenzpreis und trackt Ladekosten sowie Entlade-Gewinne.
   * **❤️ Safety Heartbeat:** Überwacht den Wechselrichter-Status und sendet Befehle erneut, falls sie (z.B. durch WLAN-Probleme) nicht angekommen sind.

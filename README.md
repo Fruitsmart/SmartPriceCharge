@@ -120,6 +120,9 @@ Das Skript prüft jede Minute den Status in dieser Reihenfolge:
 
 ---
 
+<img width="456" height="889" alt="image" src="https://github.com/user-attachments/assets/b75af76f-cc9c-40d6-aec6-c54d65938ece" />
+
+---
 ## ⚠️ Haftungsausschluss & Lizenz
 
 Nutzung auf eigene Gefahr. Das Skript greift aktiv in die Hardware-Steuerung ein. Lizenziert unter MIT-Lizenz.

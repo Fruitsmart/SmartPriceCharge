@@ -1,54 +1,80 @@
 smart_price_charge:
   module: smart_price_charge
   class: SmartPriceCharge
+  language: DE
+ 
   
-  # --- Sensoren (Mapping auf deine existierenden Entitäten) ---
-  price_sensor_id: sensor.tibber_preise_vorhersage_rest 
+  # NEU: Wartezeit nach Neustart in Sekunden (Standard: 120 = 2 Min)
+  startup_delay_seconds: 120
+
+  # Hardware & Sensoren (Live-Daten) ---
+  price_sensor_id: sensor.electricity_price_prognose_15min_am_rottenbach_6
   current_soc_sensor_id: sensor.battery_state_of_charge
-  inverter_mode_entity_id: select.inverter_operation_mode
+  inverter_mode_entity_id: select.goodwe_ems_mode
   
-  # PV
-  pv_forecast_sensor_id: sensor.energy_next_hour
-  pv_forecast_current_hour_sensor_id: sensor.energy_current_hour
-  pv_forecast_today_remaining_sensor_id: sensor.energy_production_today_remaining
-  pv_peak_time_sensor_id: sensor.power_highest_peak_time_today
-  
-  # Power
+  # EMS Befehle und Ladeziel-Hardware für GoodWe
+  inverter_mode_charge: "charge_battery"
+  inverter_mode_general: "auto"
+  inverter_mode_backup: "battery_standby"
+  inverter_max_soc_entity_id: number.goodwe_eco_mode_soc
+
+  # NEU in v1.5: Umwelt & Wetter ---
+  sun_sensor_id: sun.sun
+  weather_sensor_id: weather.hildesheim  
+  cloud_coverage_sensor_id: sensor.hildesheim_bewolkungsgrad
+
+  # PV PROGNOSE SENSOREN (Solcast) ---
+  pv_forecast_sensor_id: sensor.solcast_next_hour_kwh
+  pv_forecast_current_hour_sensor_id: sensor.solcast_current_hour_kwh
+  pv_forecast_today_remaining_sensor_id: sensor.solcast_pv_forecast_prognose_verbleibende_leistung_heute
+  pv_forecast_tomorrow_sensor_id: sensor.solcast_pv_forecast_prognose_morgen
+  pv_peak_time_sensor_id: sensor.solcast_pv_forecast_zeitpunkt_spitzenleistung_heute
+  avg_consumption_sensor_id: sensor.hausverbrauch_durchschnitt_24h
+
+  # Power Werte ---
   current_pv_power_sensor_id: sensor.pv_power
   battery_power_sensor_id: sensor.battery_power
-  grid_power_import_export_sensor_id: sensor.active_power_total
+  grid_power_import_export_sensor_id: sensor.meter_active_power_total
   current_house_consumption_w_id: sensor.house_consumption
 
-  # --- Settings ---
+  # Faktoren & Einstellungen ---
   battery_efficiency_factor: 0.90
   pv_forecast_safety_factor: 0.50
   min_cycle_profit_eur: 0.02
-  
-  # Dynamic Spread (v1.2)
-  min_price_spread_eur: 0.08
-  soc_threshold_medium: 80.0
+
+  # Spread Einstellungen
+  min_price_spread_eur: 0.06
+  soc_threshold_medium: 75.0
   spread_medium_soc_eur: 0.15
-  soc_threshold_high: 95.0
-  spread_high_soc_eur: 0.25
-  
-  # --- Helfer Mapping (Hier stehen deine gewohnten Namen!) ---
+  soc_threshold_high: 90.0
+  spread_high_soc_eur: 0.25 
+
+  # Sleep-Over Settings
+  sleep_over_soc: 30.0
+  morning_min_diff: 0.10
+
+  # --- 3. Konfigurations-Helfer ---
+  charge_intervals_input_id: input_number.anzahl_guenstigste_ladestunden
   battery_capacity_kwh_id: input_number.batteriekapazitaet_kwh
   charger_power_kw_id: input_number.ladeleistung_kw
   target_soc_id: input_number.ladeziel_soc_prozent
+  
+  # Schwellwerte
   price_discharge_threshold_id: input_number.tibber_entladeschwelle_eur_per_kwh
   min_soc_discharge_id: number.depth_of_discharge_on_grid
+  pv_forecast_threshold_kw_id: input_number.pv_prognose_ladeschwelle_kw
+  current_pv_threshold_w_id: input_number.aktuelle_pv_ladeschwelle_w
   reference_price_id: input_number.referenz_strompreis_ohne_optimierung_eur_per_kwh
-  charge_intervals_input_id: input_number.anzahl_guenstigste_ladestunden
-  
-  # Status Helfer (Ich habe die alten Namen behalten, damit du nichts ändern musst)
+
+  # 4. Status & Tracking Helfer ---
   dashboard_status_text_id: input_text.tibber_smart_charge_status
   app_enabled_switch_id: input_boolean.tibber_smart_charge_app_aktiv
   cheap_hour_toggle_id: input_boolean.tibber_guenstige_ladestunde
   next_charge_time_id: input_text.tibber_next_charge_time
   cheap_hours_text_id: input_text.gunstigsten_ladestunden
-  report_id: input_text.tibber_smart_charge_monatsbericht
+  report_id: input_text.tibber_smart_charge_monatsbericht  
 
-  # Tracking Helfer (Alte Namen)
+  # Tracking (Statistiken)
   cost_month_id: input_number.tibber_smart_charge_kosten_monat
   savings_month_id: input_number.tibber_smart_charge_ersparnis_monat
   discharge_savings_month_id: input_number.tibber_smart_discharge_ersparnis_monat
@@ -61,6 +87,41 @@ smart_price_charge:
   charged_kwh_total_id: input_number.tibber_smart_charge_geladene_kwh_gesamt
   pv_savings_total_id: input_number.tibber_smart_pv_savings_gesamt
 
-  # Debug
+  # KI Integration ---KI Modell Auswahl (Standard: gemini-2.5-flash)
+  gemini_model: "gemini-2.5-flash"
+  gemini_api_key: EIGENER TOKEN
+  ai_advice_text_id: input_text.smart_charge_ki_empfehlung
+  
+  # EV / Wallbox Steuerung (Optional) ---
+  # Wenn diese Entitäten nicht definiert sind, wird die Wallbox-Logik ignoriert.
+  ev_logic_active_id: input_boolean.ev_smart_charge_aktiv
+  ev_target_soc_id: input_number.ev_target_soc
+  ev_soc_sensor_id: sensor.id4_battery_level
+  ev_car_charging_switch_id: switch.id4_charging
+  ev_wallbox_switch_id: switch.wallbox_laden_schalter
+  ev_wallbox_amps_id: number.goe_315255_amp
+  ev_pv_surplus_switch_id: switch.goe_315255_fup
+  ev_wallbox_status_id: binary_sensor.goe_315255_car_0
+  # --- Fahrzeug & Wallbox Setup ---
+  ev_battery_capacity_kwh: 77.0  # Akkugröße deines Autos in kWh
+  ev_charge_power_kw: 11.0       # Maximale Ladeleistung deiner Wallbox in kW
+  # --- Der WAF-Rettungs-Schalter & Sofort-Laden ---
+  ev_boost_switch_id: input_boolean.ev_boost_mode
+  ev_immediate_charge_price: 0.30  # Unter 30 Cent lädt er IMMER sofort!
+  # --- Master-Sync: Schreibt das Limit direkt in den VW ID.4 ---
+  ev_car_target_soc_entity_id: number.id4_battery_target_charge_level
+
+  
+  # Pendler-Sicherheit (Dynamisch per Helfer) ---
+  # Die ID des Schiebereglers für den Mindest-SoC
+  monday_min_soc_id: input_number.ev_montag_sicherheits_soc
+  
+  # Die ID des Zeit-Helfers für die Abfahrt
+  monday_deadline_time_id: input_datetime.ev_montag_abfahrtszeit
+  
+  # Ab welcher Stunde am Sonntag soll er anfangen zu planen? (z.B. 20 Uhr)
+  monday_deadline_start_hour: 20
+
+  # Debugging ---
   debug_mode: false
   log_debug_level: true

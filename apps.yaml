@@ -61,6 +61,7 @@ smart_price_charge:
   need_based_target: true   # true: Ladeziel = Obergrenze; geladen wird nur, was das teure Preisfenster verbraucht (false = immer bis Ladeziel)
   peak_reserve_margin: 0.10 # Aufschlag auf den Bedarf des teuren Fensters (0.10 = +10 %)
   morning_load_w: 0         # Hauslast (W) für den Morgen-Bedarf der Brücke; 0 = automatisch (24h-Schnitt, max. 1500 W)
+  inverter_stuck_after_s: 300  # nach so vielen Sekunden ohne Ladeleistung gilt der GoodWe als 'hängend' (dann Integration neu laden)
 
   # Sleep-Over Settings
   sleep_over_soc: 30.0

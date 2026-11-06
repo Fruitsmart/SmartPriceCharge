@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.1 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.2 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -11,7 +11,7 @@ import math
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.1"
+APP_VERSION = "6.8.2"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -46,7 +46,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.1 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.2 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -71,7 +71,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.1 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.2 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -215,7 +215,11 @@ class SmartPriceCharge(hass.Hass):
         self._state_cache = {}
         self._wb_timer_handle = None
         self._last_inv_cmd_time = None
+        self._last_reload_time = None
         self._inv_retry_count = 0
+        # Nach einem Moduswechsel braucht der GoodWe oft mehrere Minuten, bis die Leistung anläuft.
+        # Erst danach gilt 'lädt nicht' als Hardware-Hänger (vorher 120 s -> unnötige Integrations-Reloads).
+        self.inverter_stuck_after_s = float(self.args.get('inverter_stuck_after_s', 300.0))
 
         self._battery_stored_kwh = 0.0
         self._battery_avg_buy_price = 0.25
@@ -293,8 +297,12 @@ class SmartPriceCharge(hass.Hass):
         val = round(value, decimals)
         with self._lock:
             try:
-                self.set_state(entity_id, state=val)
-                self._state_cache[f"float_{entity_id}"] = val
+                cache_key = f"float_{entity_id}"
+                if cache_key in self._state_cache and abs(self._state_cache[cache_key] - val) < 1e-9:
+                    return
+                # Als String senden: ein Zahlenwert 0.0 wurde bei manchen AppDaemon-Versionen als 'kein Zustand' gewertet (HTTP 400)
+                self.set_state(entity_id, state=str(val))
+                self._state_cache[cache_key] = val
             except (ValueError, TypeError, KeyError):
                 pass
 
@@ -404,13 +412,15 @@ class SmartPriceCharge(hass.Hass):
             raw_op = self.get_state(self.inverter_operation_mode_entity_id) if self.inverter_operation_mode_entity_id else "ok"
 
             if raw_ems in ['unavailable', 'unknown', None] or raw_op in ['unavailable', 'unknown', None]:
-                if (now - self._last_inv_cmd_time).total_seconds() >= 60:
+                reload_pause_ok = self._last_reload_time is None or (now - self._last_reload_time).total_seconds() >= 180
+                if (now - self._last_inv_cmd_time).total_seconds() >= 60 and reload_pause_ok:
                     self.log("WARNUNG: GoodWe Entität ist 'unavailable' -> Lade GoodWe-Integration automatisch neu!", level="WARNING")
                     try:
                         self.call_service("homeassistant/reload_config_entry", entity_id=self.inverter_mode_entity_id)
                     except Exception as e:
                         self.log(f"Reload Fehler: {e}", level="ERROR")
                     self._last_inv_cmd_time = now
+                    self._last_reload_time = now
                 return
 
             current_mode = str(raw_ems).strip()
@@ -429,7 +439,7 @@ class SmartPriceCharge(hass.Hass):
             secs_since_last_cmd = (now - self._last_inv_cmd_time).total_seconds()
 
             hardware_stuck = False
-            if not mode_mismatch and secs_since_last_cmd >= 120:
+            if not mode_mismatch and secs_since_last_cmd >= self.inverter_stuck_after_s:
                 if target_mode == self.mode_charge and cur_soc < (target_soc - 1.0) and cur_batt_pwr > -100.0:
                     hardware_stuck = True
                     self.log(f"WARNUNG: GoodWe zeigt '{current_mode}'/'{current_op}', lädt aber nicht (Batt: {cur_batt_pwr:.0f}W)!", level="WARNING")
@@ -455,6 +465,7 @@ class SmartPriceCharge(hass.Hass):
             if hardware_stuck:
                 self._inv_retry_count += 1
                 self.log(f"SELBSTHEILUNG (Versuch {self._inv_retry_count}): Lade GoodWe-Integration neu und sende '{target_mode}' in 15s erneut...", level="WARNING")
+                self._last_reload_time = now
                 try:
                     self.call_service("homeassistant/reload_config_entry", entity_id=self.inverter_mode_entity_id)
                 except Exception as e:

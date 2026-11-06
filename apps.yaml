@@ -57,6 +57,7 @@ smart_price_charge:
   peak_swing_eur: 0.10      # ab diesem Preishub (EUR/kWh) gilt ein Preisberg als eigener Peak (Abend, Morgen ...)
   price_tie_eur: 0.01       # Preise innerhalb dieser Toleranz gelten als gleich -> frühester Slot gewinnt
   max_load_w: 800           # Obergrenze Hauslast-Schätzung (W) für die PV-Überschuss-Bilanz (dein Tagesverbrauch liegt eher bei 300-800 W)
+  grid_charge_in_sun: true  # true: im geplanten Netz-Slot auch bei Sonne aus dem Netz nachladen (false = altes Verhalten von 6.6.1)
 
   # Sleep-Over Settings
   sleep_over_soc: 30.0

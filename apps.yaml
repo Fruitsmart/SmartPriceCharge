@@ -53,11 +53,17 @@ smart_price_charge:
   soc_threshold_high: 90.0
   spread_high_soc_eur: 0.25
 
+  # Peak-Absicherung (v6.6)
+  peak_swing_eur: 0.10      # ab diesem Preishub (EUR/kWh) gilt ein Preisberg als eigener Peak (Abend, Morgen ...)
+  price_tie_eur: 0.01       # Preise innerhalb dieser Toleranz gelten als gleich -> frühester Slot gewinnt
+  max_load_w: 1500          # Obergrenze Hauslast-Schätzung (W) für die PV-Überschuss-Bilanz
+
   # Sleep-Over Settings
   sleep_over_soc: 30.0
   morning_min_diff: 0.10
 
   # --- 3. Konfigurations-Helfer ---
+  # ACHTUNG: Der Wert dieses Helfers wird als Anzahl 15-MINUTEN-SLOTS gelesen (4 = nur 1 Stunde, 16 = 4 Stunden)!
   charge_intervals_input_id: input_number.anzahl_guenstigste_ladestunden
   battery_capacity_kwh_id: input_number.batteriekapazitaet_kwh
   charger_power_kw_id: input_number.ladeleistung_kw

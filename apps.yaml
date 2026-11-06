@@ -56,7 +56,7 @@ smart_price_charge:
   # Peak-Absicherung (v6.6)
   peak_swing_eur: 0.10      # ab diesem Preishub (EUR/kWh) gilt ein Preisberg als eigener Peak (Abend, Morgen ...)
   price_tie_eur: 0.01       # Preise innerhalb dieser Toleranz gelten als gleich -> frühester Slot gewinnt
-  max_load_w: 1500          # Obergrenze Hauslast-Schätzung (W) für die PV-Überschuss-Bilanz
+  max_load_w: 800           # Obergrenze Hauslast-Schätzung (W) für die PV-Überschuss-Bilanz (dein Tagesverbrauch liegt eher bei 300-800 W)
 
   # Sleep-Over Settings
   sleep_over_soc: 30.0

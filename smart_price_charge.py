@@ -109,7 +109,7 @@ class SmartPriceCharge(hass.Hass):
         # Preise innerhalb dieser Toleranz gelten als gleich teuer -> frühester Slot gewinnt
         self.price_tie_eur = float(self.args.get('price_tie_eur', 0.01))
         # Obergrenze für die Hauslast-Schätzung (W) aus dem 24h-Durchschnitt
-        self.max_load_w = float(self.args.get('max_load_w', 1500.0))
+        self.max_load_w = float(self.args.get('max_load_w', 1000.0))
 
         # Sensor IDs
         self.price_sensor_id = self.args['price_sensor_id']
@@ -765,11 +765,14 @@ class SmartPriceCharge(hass.Hass):
         peak_price = peak_item['price']
         cur_spread = peak_price - cur_price
 
+        # Die SoC-Staffelung des Mindestabstands soll verhindern, dass ein (fast) voller Akku die PV blockiert.
+        # Das gilt nur, solange die PV wirklich produziert; danach (Abend) wird für den Peak gehalten.
         eff_spread = self.base_min_price_spread_eur
-        if cur_soc > self.soc_threshold_high:
-            eff_spread = max(eff_spread, self.spread_high_soc_eur)
-        elif cur_soc > self.soc_threshold_medium:
-            eff_spread = max(eff_spread, self.spread_medium_soc_eur)
+        if cur_pv > 300.0:
+            if cur_soc > self.soc_threshold_high:
+                eff_spread = max(eff_spread, self.spread_high_soc_eur)
+            elif cur_soc > self.soc_threshold_medium:
+                eff_spread = max(eff_spread, self.spread_medium_soc_eur)
 
         min_interim = 9.99
         interim_dip = False

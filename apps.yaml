@@ -58,6 +58,9 @@ smart_price_charge:
   price_tie_eur: 0.01       # Preise innerhalb dieser Toleranz gelten als gleich -> frühester Slot gewinnt
   max_load_w: 800           # Obergrenze Hauslast-Schätzung (W) für die PV-Überschuss-Bilanz (dein Tagesverbrauch liegt eher bei 300-800 W)
   grid_charge_in_sun: true  # true: im geplanten Netz-Slot auch bei Sonne aus dem Netz nachladen (false = altes Verhalten von 6.6.1)
+  need_based_target: true   # true: Ladeziel = Obergrenze; geladen wird nur, was das teure Preisfenster verbraucht (false = immer bis Ladeziel)
+  peak_reserve_margin: 0.10 # Aufschlag auf den Bedarf des teuren Fensters (0.10 = +10 %)
+  morning_load_w: 0         # Hauslast (W) für den Morgen-Bedarf der Brücke; 0 = automatisch (24h-Schnitt, max. 1500 W)
 
   # Sleep-Over Settings
   sleep_over_soc: 30.0

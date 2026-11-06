@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.7.0 - Peak-Absicherung, PV-Bilanz, dynamische Preisschwelle)
+# SmartPriceCharge (v6.8.0 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -11,7 +11,7 @@ import math
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.7.0"
+APP_VERSION = "6.8.0"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -46,7 +46,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.7.0 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.0 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -71,7 +71,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.7.0 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.0 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -105,6 +105,14 @@ class SmartPriceCharge(hass.Hass):
         self.max_load_w = float(self.args.get('max_load_w', 1000.0))
         # True: im geplanten Netz-Slot wird auch bei Sonne aus dem Netz nachgeladen (PV wird im Modus charge_battery zuerst genutzt)
         self.grid_charge_in_sun = bool(self.args.get('grid_charge_in_sun', True))
+        # True: Das Ladeziel ist nur die OBERGRENZE. Geladen wird nur so viel, wie das teure Preisfenster
+        # verbraucht (jede kWh muss sich gegen ihren Verwertungspreis lohnen). False = immer bis zum Ladeziel.
+        self.need_based_target = bool(self.args.get('need_based_target', True))
+        # Sicherheitsaufschlag auf den Bedarf des teuren Fensters (0.10 = +10 %)
+        self.peak_reserve_margin = float(self.args.get('peak_reserve_margin', 0.10))
+        # Hauslast (W), mit der die Morgen-Brücke den Bedarf bis zum Ende des Morgen-Peaks rechnet.
+        # 0 = automatisch (24h-Durchschnitt, max. 1500 W). Beim Abgleich mit dem Log ('Brücke Bedarf') anpassen.
+        self.morning_load_w = float(self.args.get('morning_load_w', 0.0))
 
         # Basis & GoodWe Sensoren
         self.price_sensor_id = self.args['price_sensor_id']
@@ -526,6 +534,19 @@ class SmartPriceCharge(hass.Hass):
                 return peak
         return peak
 
+    def _sun_time(self, attr, now):
+        """Liest next_rising / next_setting von sun.sun als zeitzonenbewusstes datetime (oder None)."""
+        if not self.sun_sensor_id:
+            return None
+        v = self._safe_get_state(self.sun_sensor_id, attribute=attr)
+        if not v:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(v).replace('Z', '+00:00'))
+            return dt if dt.tzinfo else dt.replace(tzinfo=now.tzinfo)
+        except Exception:
+            return None
+
     def _pv_window(self, now, deadline, is_daylight):
         """
         Liefert (stunden, anteil, nutzt_morgen) für das PV-Zeitfenster zwischen jetzt und Deadline:
@@ -841,11 +862,20 @@ class SmartPriceCharge(hass.Hass):
 
             if (max_morning_price >= price_discharge_limit or (max_morning_price - min_night_price) >= self.morning_min_diff) and min_night_price < price_discharge_limit:
                 end_of_morning_peak = datetime.combine(morning_date, time(10, 0)).replace(tzinfo=now.tzinfo)
+                # Ist der Morgen sonnig, übernimmt die PV kurz nach Sonnenaufgang: der Akku muss nur bis dahin reichen
+                sun_morning_kwh = fc_rem if morning_date == today_date else fc_tmrw
+                if sun_morning_kwh >= dynamic_summer_threshold:
+                    rise_dt = self._sun_time('next_rising', now)
+                    if rise_dt is not None:
+                        end_of_morning_peak = min(end_of_morning_peak, rise_dt.astimezone(now.tzinfo) + timedelta(hours=1.5))
                 hours_until_morning_end = max(0.0, (end_of_morning_peak - max(now, max_morning_slot['time_dt'] - timedelta(hours=2))).total_seconds() / 3600.0)
+                morning_load = self.morning_load_w if self.morning_load_w > 0 else avg_load_w
                 needed_for_morning_kwh = max(
                     ((self.sleep_over_soc - base_min_soc) / 100.0) * batt_cap * self.efficiency_factor,
-                    (avg_load_w / 1000.0) * hours_until_morning_end
+                    (morning_load / 1000.0) * hours_until_morning_end
                 )
+                if self.log_debug_level:
+                    self.log(f"Brücke Bedarf: {needed_for_morning_kwh:.1f}kWh (Last {morning_load:.0f}W x {hours_until_morning_end:.1f}h bis {end_of_morning_peak.strftime('%H:%M')}), nutzbar {usable_soc_kwh:.1f}kWh", level="INFO")
 
                 if usable_soc_kwh < needed_for_morning_kwh and pre_morning_pool:
                     morning_bridge_active = True
@@ -901,7 +931,6 @@ class SmartPriceCharge(hass.Hass):
                 target_soc = self.sleep_over_soc
 
         # --- ENERGIE-BILANZ bis zur Deadline (nur Plan ohne Morgen-Brücke) ---
-        need_soc_kwh = morning_deficit_kwh if morning_bridge_active else max(0.0, (target_soc - cur_soc) / 100 * batt_cap)
         pv_surplus_kwh = 0.0
         pv_hours = 0.0
         pv_fc_kwh = 0.0
@@ -916,17 +945,58 @@ class SmartPriceCharge(hass.Hass):
             plan_load_w = max(200.0, 0.5 * avg_24h_w + 0.5 * min(self.max_load_w, cur_house))
             if pv_hours > 0:
                 pv_surplus_kwh = max(0.0, pv_fc_kwh * pv_share - (plan_load_w / 1000.0) * pv_hours) * self.pv_forecast_safety_factor
+
+        def _slots_for(need_kwh):
+            return min(int(math.ceil((need_kwh / charge_pwr) * 4)) if charge_pwr > 0 else 0, user_intervals)
+
+        def _pick_slots(n):
+            tie = self.price_tie_eur
+            if not pool or n <= 0:
+                return []
+            return sorted(pool, key=lambda x: (round(x['price'] / tie) if tie > 0 else x['price'], x['time_dt']))[:n]
+
+        # --- BEDARFSORIENTIERTES LADEZIEL (Ladeziel aus dem Dashboard = Obergrenze) ---
+        # Eine kWh im Akku lohnt sich nur, wenn sie später in einem Slot verbraucht wird, dessen Preis nach
+        # Wirkungsgrad über dem Ladepreis + Mindestgewinn liegt. Das teure Fenster reicht von jetzt bis zum
+        # ersten Slot NACH dem Peak, der unter diese Grenze fällt (dort kann günstig nachgeladen werden).
+        target_soc_plan = target_soc
+        hump_info = ""
+        if self.need_based_target and not morning_bridge_active:
+            def _target_for(charge_price):
+                thr = (charge_price + self.min_cycle_profit_eur) / self.efficiency_factor
+                end = None
+                for x in all_prices:
+                    if x['time_dt'] > deadline and x['price'] < thr:
+                        end = x['time_dt']
+                        break
+                if end is None:
+                    end = all_prices[-1]['time_dt'] + timedelta(minutes=15)
+                n_hump = sum(1 for x in all_prices if start_slot <= x['time_dt'] < end and x['price'] >= thr)
+                demand_kwh = n_hump * (avg_load_w / 1000.0) * 0.25 / self.efficiency_factor
+                t_soc = min(target_soc, base_min_soc + demand_kwh * (1.0 + self.peak_reserve_margin) / batt_cap * 100.0)
+                return t_soc, demand_kwh, n_hump, end
+
+            if pool:
+                p_charge = min(x['price'] for x in pool)
+                t1 = _target_for(p_charge)[0]
+                need1 = max(0.0, min((t1 - cur_soc) / 100 * batt_cap - pv_surplus_kwh, batt_cap))
+                picked = _pick_slots(_slots_for(need1))
+                if picked:
+                    p_charge = sum(x['price'] for x in picked) / len(picked)
+                target_soc_plan, demand_kwh, n_hump, hump_end = _target_for(p_charge)
+                hump_info = f" | Peak-Fenster {n_hump} Slots bis {hump_end.strftime('%H:%M')} = {demand_kwh:.1f}kWh -> Ziel {target_soc_plan:.0f}% (max {target_soc:.0f}%)"
+            else:
+                target_soc_plan = min(target_soc, cur_soc)
+
+        need_soc_kwh = morning_deficit_kwh if morning_bridge_active else max(0.0, (target_soc_plan - cur_soc) / 100 * batt_cap)
         needed_kwh = max(0.0, min(need_soc_kwh - pv_surplus_kwh, batt_cap))
         slots_uncapped = int(math.ceil((needed_kwh / charge_pwr) * 4)) if charge_pwr > 0 else 0
-        final_slots = min(slots_uncapped, user_intervals)
+        final_slots = _slots_for(needed_kwh)
 
         cheap_hours_info = "0x 15min (--:--) Ø 0.000 EUR"
         current_time_in_best_block = False
-        best_slots = []
-        if pool and final_slots > 0:
-            tie = self.price_tie_eur
-            best_slots = sorted(pool, key=lambda x: (round(x['price'] / tie) if tie > 0 else x['price'], x['time_dt']))[:final_slots]
-            best_slots.sort(key=lambda x: x['time_dt'])
+        best_slots = _pick_slots(final_slots)
+        best_slots.sort(key=lambda x: x['time_dt'])
 
         if best_slots:
             avg_price_slots = sum(i['price'] for i in best_slots) / len(best_slots)
@@ -943,7 +1013,7 @@ class SmartPriceCharge(hass.Hass):
                 f"PLAN: {'Morgen-Brücke' if morning_bridge_active else 'Peak'} {deadline.strftime('%d.%m %H:%M')} @{plan_peak_price:.3f} (Max {max_future_price:.3f}, Grenze {price_discharge_limit:.3f}/Schwelle {price_discharge_limit_user:.2f}) | "
                 f"Bedarf {need_soc_kwh:.1f}kWh - PV-Überschuss {pv_surplus_kwh:.1f}kWh (PV {pv_fc_kwh:.1f}kWh, {pv_hours:.1f}h, Last {plan_load_w:.0f}W) "
                 f"= {needed_kwh:.1f}kWh -> {slots_uncapped} Slots (Limit {user_intervals}, Pool {len(pool)}, max. Kaufpreis {max_buy_price:.3f}) | "
-                f"Hold={should_hold} (Spread {cur_spread:.3f}/{eff_spread:.2f}, Dip={interim_dip}) Ziel-SoC {target_soc:.0f}%",
+                f"Hold={should_hold} (Spread {cur_spread:.3f}/{eff_spread:.2f}, Dip={interim_dip}) Ziel-SoC {target_soc:.0f}%{hump_info}",
                 level="INFO")
         if slots_uncapped > user_intervals and (now.hour, now.date()) != getattr(self, '_last_cap_warn', None):
             self._last_cap_warn = (now.hour, now.date())

@@ -100,7 +100,7 @@ smart_price_charge:
 
   # --- KI INTEGRATION & STEUERUNG ---
   gemini_model: "gemini-3.5-flash"
-  gemini_api_key: "DEIN_GEMINI_API_KEY"   # hier deinen echten Key eintragen (nicht ins öffentliche Repo committen)
+  gemini_api_key: !secret gemini_api_key   # Wert steht in der AppDaemon secrets.yaml, nicht im Repo
   ai_trigger_button_id: input_button.start_ki_analyse
   ai_advice_text_id: input_text.smart_charge_ki_empfehlung
 

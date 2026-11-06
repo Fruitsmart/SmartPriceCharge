@@ -2,25 +2,29 @@ smart_price_charge:
   module: smart_price_charge
   class: SmartPriceCharge
   language: DE
- 
-  
-  # NEU: Wartezeit nach Neustart in Sekunden (Standard: 120 = 2 Min)
+
+  # Wartezeit nach Neustart in Sekunden
   startup_delay_seconds: 120
 
-  # Hardware & Sensoren (Live-Daten) ---
+  # --- BASIS CONFIG & PREIS-SENSOREN ---
   price_sensor_id: sensor.electricity_price_prognose_15min_am_rottenbach_6
   current_soc_sensor_id: sensor.battery_state_of_charge
-  inverter_mode_entity_id: select.goodwe_ems_mode
   
-  # EMS Befehle und Ladeziel-Hardware für GoodWe
+# --- GOODWE EMS & BETRIEBSART ---
+  inverter_mode_entity_id: select.goodwe_ems_mode              
   inverter_mode_charge: "charge_battery"
   inverter_mode_general: "auto"
   inverter_mode_backup: "battery_standby"
-  inverter_max_soc_entity_id: number.goodwe_eco_mode_soc
 
-  # NEU in v1.5: Umwelt & Wetter ---
+  inverter_operation_mode_entity_id: select.inverter_operation_mode 
+  inverter_op_mode_charge: "eco_charge"
+  inverter_op_mode_general: "general"
+  inverter_op_mode_backup: "backup"
+  
+  inverter_max_soc_entity_id: number.goodwe_eco_mode_soc
+  # Umwelt & Wetter ---
   sun_sensor_id: sun.sun
-  weather_sensor_id: weather.hildesheim  
+  weather_sensor_id: weather.hildesheim
   cloud_coverage_sensor_id: sensor.hildesheim_bewolkungsgrad
 
   # PV PROGNOSE SENSOREN (Solcast) ---
@@ -47,7 +51,7 @@ smart_price_charge:
   soc_threshold_medium: 75.0
   spread_medium_soc_eur: 0.15
   soc_threshold_high: 90.0
-  spread_high_soc_eur: 0.25 
+  spread_high_soc_eur: 0.25
 
   # Sleep-Over Settings
   sleep_over_soc: 30.0
@@ -58,7 +62,7 @@ smart_price_charge:
   battery_capacity_kwh_id: input_number.batteriekapazitaet_kwh
   charger_power_kw_id: input_number.ladeleistung_kw
   target_soc_id: input_number.ladeziel_soc_prozent
-  
+
   # Schwellwerte
   price_discharge_threshold_id: input_number.tibber_entladeschwelle_eur_per_kwh
   min_soc_discharge_id: number.depth_of_discharge_on_grid
@@ -72,55 +76,71 @@ smart_price_charge:
   cheap_hour_toggle_id: input_boolean.tibber_guenstige_ladestunde
   next_charge_time_id: input_text.tibber_next_charge_time
   cheap_hours_text_id: input_text.gunstigsten_ladestunden
-  report_id: input_text.tibber_smart_charge_monatsbericht  
+  report_id: input_text.tibber_smart_charge_monatsbericht
 
-  # Tracking (Statistiken)
-  cost_month_id: input_number.tibber_smart_charge_kosten_monat
+  # --- STATISTIKEN (Monat) ---
+  cost_month_id: sensor.tibber_rechnungsbetrag_aktuell
   savings_month_id: input_number.tibber_smart_charge_ersparnis_monat
   discharge_savings_month_id: input_number.tibber_smart_discharge_ersparnis_monat
-  charged_kwh_month_id: input_number.tibber_smart_charge_geladene_kwh_monat
   pv_savings_month_id: input_number.tibber_smart_pv_savings_monat
-  
-  cost_total_id: input_number.tibber_smart_charge_kosten_gesamt
+  charged_kwh_month_id: input_number.tibber_smart_charge_geladene_kwh_monat
+
+  # --- STATISTIKEN (Lifetime / Gesamt) ---
   savings_total_id: input_number.tibber_charge_ersparnis_lifetime_final
   discharge_savings_total_id: input_number.tibber_smart_discharge_ersparnis_gesamt
-  charged_kwh_total_id: input_number.tibber_smart_charge_geladene_kwh_gesamt
   pv_savings_total_id: input_number.tibber_smart_pv_savings_gesamt
-
-  # KI Integration ---KI Modell Auswahl (Standard: gemini-2.5-flash)
-  gemini_model: "gemini-2.5-flash"
-  gemini_api_key: EIGENER TOKEN
-  ai_advice_text_id: input_text.smart_charge_ki_empfehlung
   
-  # EV / Wallbox Steuerung (Optional) ---
-  # Wenn diese Entitäten nicht definiert sind, wird die Wallbox-Logik ignoriert.
-  ev_logic_active_id: input_boolean.ev_smart_charge_aktiv
+ 
+
+  # --- KI INTEGRATION & STEUERUNG ---
+  gemini_model: "gemini-3.5-flash"
+  gemini_api_key: !secret gemini_api_key
+  ai_trigger_button_id: input_button.start_ki_analyse
+  ai_advice_text_id: input_text.smart_charge_ki_empfehlung
+
+
+  # EV / Wallbox Steuerung ---
+  ev_logic_active_id: input_boolean.ev_laden_aktiv
   ev_target_soc_id: input_number.ev_target_soc
-  ev_soc_sensor_id: sensor.id4_battery_level
-  ev_car_charging_switch_id: switch.id4_charging
-  ev_wallbox_switch_id: switch.wallbox_laden_schalter
+  ev_soc_sensor_id: sensor.id_4_ladezustand_2 # Über Tibber
+  ev_wallbox_switch_id: select.goe_315255_frc
   ev_wallbox_amps_id: number.goe_315255_amp
   ev_pv_surplus_switch_id: switch.goe_315255_fup
-  ev_wallbox_status_id: binary_sensor.goe_315255_car_0
-  # --- Fahrzeug & Wallbox Setup ---
-  ev_battery_capacity_kwh: 77.0  # Akkugröße deines Autos in kWh
-  ev_charge_power_kw: 11.0       # Maximale Ladeleistung deiner Wallbox in kW
-  # --- Der WAF-Rettungs-Schalter & Sofort-Laden ---
-  ev_boost_switch_id: input_boolean.ev_boost_mode
-  ev_immediate_charge_price: 0.30  # Unter 30 Cent lädt er IMMER sofort!
-  # --- Master-Sync: Schreibt das Limit direkt in den VW ID.4 ---
-  ev_car_target_soc_entity_id: number.id4_battery_target_charge_level
+  ev_wallbox_status_id: sensor.goe_315255_car_value
+  ev_logic_mode_id: select.goe_315255_lmo
+  ev_plug_sensor_id: binary_sensor.goe_315255_car_0
 
-  
-  # Pendler-Sicherheit (Dynamisch per Helfer) ---
-  # Die ID des Schiebereglers für den Mindest-SoC
+  # Fahrzeug & Wallbox Setup
+  ev_battery_capacity_kwh: 77.0
+  ev_charge_power_kw: 11.0
+
+  # Sofort-Laden & WAF-Boost
+  ev_boost_switch_id: input_boolean.ev_boost_mode
+  ev_immediate_charge_price: 0.20
+  ev_charge_plan_id: input_text.ev_ladeplan
+
+  # Pendler-Sicherheit
   monday_min_soc_id: input_number.ev_montag_sicherheits_soc
-  
-  # Die ID des Zeit-Helfers für die Abfahrt
   monday_deadline_time_id: input_datetime.ev_montag_abfahrtszeit
+  monday_deadline_start_hour: 12
   
-  # Ab welcher Stunde am Sonntag soll er anfangen zu planen? (z.B. 20 Uhr)
-  monday_deadline_start_hour: 20
+   # ==========================================================
+  # NEUE WINTER-PARAMETER (v5.1)
+  # ==========================================================
+
+  # 1. Hysterese für den Speicherschutz (in Prozent, Standard: 5.0)
+
+  home_battery_priority_soc: 95.0          # Deine Heimspeicher-Zielschwelle (z.B. 95%) [cite: 888]
+  home_battery_priority_hysteresis: 5.0    # Deine Hysterese in % (z.B. 5%) [cite: 917]
+  
+  # 2. Helfer für den dynamischen Sofort-Laden-Preis (Vollgas-Preis)
+  ev_immediate_charge_price_id: input_number.ev_immediate_charge_price
+  # (Als Fallback wird weiterhin 'ev_immediate_charge_price: 0.20' genutzt, falls der Helfer fehlt)
+
+  # Optionale Komfort-Features (auskommentiert, solange VW-Cloud gesperrt ist)
+  # ev_climatisation_switch_id: climate.id4_electric_climatisation
+  # ev_battery_care_mode_switch_id: switch.id4_battery_care_mode
+  # ev_cruising_range_sensor_id: sensor.id4_restreichweite_berechnet
 
   # Debugging ---
   debug_mode: false

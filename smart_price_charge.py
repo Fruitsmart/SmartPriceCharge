@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.0 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.1 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -11,7 +11,7 @@ import math
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.0"
+APP_VERSION = "6.8.1"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -46,7 +46,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.0 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.1 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -71,7 +71,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.0 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.1 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -1145,7 +1145,14 @@ class SmartPriceCharge(hass.Hass):
                 charge_toggle_on = True
                 self._set_inverter_mode(self.mode_charge)
                 if self.dashboard_status_text_id:
-                    self.set_state(self.dashboard_status_text_id, state=f"{self.T['STATUS_CHARGE_ACTIVE']}: {cur_price:.3f}€ / Slot aktiv")
+                    # Plan-Kurzinfo fürs Dashboard: wie lange noch, wie viel Bedarf, bis zu welchem Ziel
+                    if morning_bridge_active:
+                        plan_txt = f"Morgen-Brücke: noch {len(best_slots)} Slots, Bedarf {needed_kwh:.1f}kWh"
+                    elif panic_mode and not current_time_in_best_block:
+                        plan_txt = f"Nachladen vor Peak {plan_peak_price:.2f}€, Bedarf {needed_kwh:.1f}kWh"
+                    else:
+                        plan_txt = f"noch {len(best_slots)} Slots, Bedarf {needed_kwh:.1f}kWh, Ziel {target_soc_plan:.0f}%, Peak {plan_peak_price:.2f}€"
+                    self.set_state(self.dashboard_status_text_id, state=f"{self.T['STATUS_CHARGE_ACTIVE']}: {cur_price:.3f}€ / Slot aktiv | {plan_txt}")
             else:
                 self._set_inverter_mode(self.mode_backup if should_hold else self.mode_general)
                 if self.dashboard_status_text_id:

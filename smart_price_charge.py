@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.2 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.3 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -11,7 +11,7 @@ import math
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.2"
+APP_VERSION = "6.8.3"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -46,7 +46,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.2 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.3 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -71,7 +71,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.2 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.3 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -113,6 +113,10 @@ class SmartPriceCharge(hass.Hass):
         # Hauslast (W), mit der die Morgen-Brücke den Bedarf bis zum Ende des Morgen-Peaks rechnet.
         # 0 = automatisch (24h-Durchschnitt, max. 1500 W). Beim Abgleich mit dem Log ('Brücke Bedarf') anpassen.
         self.morning_load_w = float(self.args.get('morning_load_w', 0.0))
+        # PV-Übernahme am Morgen: Reicht die PV-Prognose des Tages für mindestens so viele kWh, endet der
+        # Akku-Bedarf der Morgen-Brücke 'pv_takeover_delay_h' Stunden nach Sonnenaufgang.
+        self.pv_takeover_min_kwh = float(self.args.get('pv_takeover_min_kwh', 4.0))
+        self.pv_takeover_delay_h = float(self.args.get('pv_takeover_delay_h', 2.0))
 
         # Basis & GoodWe Sensoren
         self.price_sensor_id = self.args['price_sensor_id']
@@ -873,20 +877,31 @@ class SmartPriceCharge(hass.Hass):
 
             if (max_morning_price >= price_discharge_limit or (max_morning_price - min_night_price) >= self.morning_min_diff) and min_night_price < price_discharge_limit:
                 end_of_morning_peak = datetime.combine(morning_date, time(10, 0)).replace(tzinfo=now.tzinfo)
-                # Ist der Morgen sonnig, übernimmt die PV kurz nach Sonnenaufgang: der Akku muss nur bis dahin reichen
+                # PV übernimmt kurz nach Sonnenaufgang, wenn die Tagesprognose brauchbar ist
                 sun_morning_kwh = fc_rem if morning_date == today_date else fc_tmrw
-                if sun_morning_kwh >= dynamic_summer_threshold:
+                if sun_morning_kwh >= self.pv_takeover_min_kwh:
                     rise_dt = self._sun_time('next_rising', now)
                     if rise_dt is not None:
-                        end_of_morning_peak = min(end_of_morning_peak, rise_dt.astimezone(now.tzinfo) + timedelta(hours=1.5))
-                hours_until_morning_end = max(0.0, (end_of_morning_peak - max(now, max_morning_slot['time_dt'] - timedelta(hours=2))).total_seconds() / 3600.0)
-                morning_load = self.morning_load_w if self.morning_load_w > 0 else avg_load_w
+                        end_of_morning_peak = min(end_of_morning_peak, rise_dt.astimezone(now.tzinfo) + timedelta(hours=self.pv_takeover_delay_h))
+                # Bedarf = Last x Anzahl der TEUREN Morgen-Slots (Preis nach Wirkungsgrad über dem Nacht-Ladepreis),
+                # gezählt ab dem letzten günstigen Nachtslot bis zum Ende des Peaks bzw. der PV-Übernahme.
+                # (Früher: feste Last x 5 h = mehr als der Akku fasst -> jede Nacht Vollladung aus dem Netz.)
+                cheapest_night = [x for x in pre_morning_pool if x['price'] <= min_night_price + self.price_tie_eur]
+                cheap_t = max(cheapest_night, key=lambda x: x['time_dt'])['time_dt'] if cheapest_night else now
+                thr_morning = (min_night_price + self.min_cycle_profit_eur) / self.efficiency_factor
+                for x in all_prices:
+                    if x['time_dt'] > max_morning_slot['time_dt'] and x['price'] < thr_morning:
+                        end_of_morning_peak = min(end_of_morning_peak, x['time_dt'])
+                        break
+                n_morning = sum(1 for x in all_prices if cheap_t < x['time_dt'] < end_of_morning_peak and x['price'] >= thr_morning)
+                hours_until_morning_end = n_morning * 0.25
+                morning_load = self.morning_load_w if self.morning_load_w > 0 else min(avg_load_w, self.max_load_w)
                 needed_for_morning_kwh = max(
                     ((self.sleep_over_soc - base_min_soc) / 100.0) * batt_cap * self.efficiency_factor,
-                    (morning_load / 1000.0) * hours_until_morning_end
+                    (morning_load / 1000.0) * hours_until_morning_end * (1.0 + self.peak_reserve_margin)
                 )
                 if self.log_debug_level:
-                    self.log(f"Brücke Bedarf: {needed_for_morning_kwh:.1f}kWh (Last {morning_load:.0f}W x {hours_until_morning_end:.1f}h bis {end_of_morning_peak.strftime('%H:%M')}), nutzbar {usable_soc_kwh:.1f}kWh", level="INFO")
+                    self.log(f"Brücke Bedarf: {needed_for_morning_kwh:.1f}kWh ({n_morning} teure Morgen-Slots bis {end_of_morning_peak.strftime('%H:%M')}, Last {morning_load:.0f}W, Reserve {self.sleep_over_soc:.0f}%), nutzbar {usable_soc_kwh:.1f}kWh", level="INFO")
 
                 if usable_soc_kwh < needed_for_morning_kwh and pre_morning_pool:
                     morning_bridge_active = True
@@ -973,6 +988,13 @@ class SmartPriceCharge(hass.Hass):
         target_soc_plan = target_soc
         hump_info = ""
         if self.need_based_target and not morning_bridge_active:
+            # Der Bedarf zählt erst NACH dem letzten günstigen Ladeslot (was davor verbraucht wird, deckt die vorhandene Ladung)
+            cheap_t = start_slot
+            if pool:
+                min_pool = min(x['price'] for x in pool)
+                cheap_t = max((x for x in pool if x['price'] <= min_pool + self.price_tie_eur), key=lambda x: x['time_dt'])['time_dt']
+            hump_load_w = (self.morning_load_w if self.morning_load_w > 0 else min(avg_load_w, self.max_load_w)) if is_morning_peak else avg_load_w
+
             def _target_for(charge_price):
                 thr = (charge_price + self.min_cycle_profit_eur) / self.efficiency_factor
                 end = None
@@ -982,8 +1004,15 @@ class SmartPriceCharge(hass.Hass):
                         break
                 if end is None:
                     end = all_prices[-1]['time_dt'] + timedelta(minutes=15)
-                n_hump = sum(1 for x in all_prices if start_slot <= x['time_dt'] < end and x['price'] >= thr)
-                demand_kwh = n_hump * (avg_load_w / 1000.0) * 0.25 / self.efficiency_factor
+                if is_morning_peak:
+                    # PV übernimmt kurz nach Sonnenaufgang, wenn die Tagesprognose brauchbar ist
+                    sun_kwh = fc_rem if deadline.date() == today_date else fc_tmrw
+                    if sun_kwh >= self.pv_takeover_min_kwh:
+                        rise_dt = self._sun_time('next_rising', now)
+                        if rise_dt is not None:
+                            end = min(end, rise_dt.astimezone(now.tzinfo) + timedelta(hours=self.pv_takeover_delay_h))
+                n_hump = sum(1 for x in all_prices if max(start_slot, cheap_t) <= x['time_dt'] < end and x['price'] >= thr)
+                demand_kwh = n_hump * (hump_load_w / 1000.0) * 0.25 / self.efficiency_factor
                 t_soc = min(target_soc, base_min_soc + demand_kwh * (1.0 + self.peak_reserve_margin) / batt_cap * 100.0)
                 return t_soc, demand_kwh, n_hump, end
 

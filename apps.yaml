@@ -64,6 +64,10 @@ smart_price_charge:
   inverter_stuck_after_s: 300  # nach so vielen Sekunden ohne Ladeleistung gilt der GoodWe als 'hängend' (dann Integration neu laden)
   pv_takeover_min_kwh: 4.0  # ab dieser PV-Tagesprognose (kWh) endet der Morgen-Akkubedarf kurz nach Sonnenaufgang
   pv_takeover_delay_h: 2.0   # so viele Stunden nach Sonnenaufgang übernimmt die PV das Haus
+  # --- PV-Kalibrierung (v6.8.4): loggt um 22:00 'Prognose vs. gemessen' und schlägt einen Sicherheitsfaktor vor ---
+  # pv_forecast_today_sensor_id: sensor.solcast_pv_forecast_prognose_heute   # Solcast 'Prognose heute' (Tagessumme); ohne Angabe wird die Rest-Prognose vom frühen Morgen genutzt
+  # pv_energy_today_sensor_id: sensor.DEIN_PV_TAGESERTRAG                     # optional: Tagesertrag des Wechselrichters (kWh); ohne Angabe summiert die App die PV-Leistung selbst
+  pv_auto_calibrate: false    # true: Sicherheitsfaktor automatisch aus den letzten 7 Tagen (mind. 3 Tage) ableiten
 
   # Sleep-Over Settings
   sleep_over_soc: 30.0

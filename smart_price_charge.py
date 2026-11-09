@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.3 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.4 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -8,10 +8,11 @@ import appdaemon.plugins.hass.hassapi as hass
 import requests
 import json
 import math
+import os
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.3"
+APP_VERSION = "6.8.4"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -46,7 +47,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.3 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.4 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -71,7 +72,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.3 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.4 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -117,6 +118,10 @@ class SmartPriceCharge(hass.Hass):
         # Akku-Bedarf der Morgen-Brücke 'pv_takeover_delay_h' Stunden nach Sonnenaufgang.
         self.pv_takeover_min_kwh = float(self.args.get('pv_takeover_min_kwh', 4.0))
         self.pv_takeover_delay_h = float(self.args.get('pv_takeover_delay_h', 2.0))
+        # PV-Kalibrierung: vergleicht abends die Tagesprognose mit der gemessenen PV-Erzeugung
+        self.pv_forecast_today_sensor_id = self.args.get('pv_forecast_today_sensor_id', None)  # Solcast 'Prognose heute' (Tagessumme, kWh)
+        self.pv_energy_today_sensor_id = self.args.get('pv_energy_today_sensor_id', None)      # PV-Tagesertrag des Wechselrichters (kWh), optional
+        self.pv_auto_calibrate = bool(self.args.get('pv_auto_calibrate', False))               # True: Sicherheitsfaktor aus den letzten Tagen ableiten
 
         # Basis & GoodWe Sensoren
         self.price_sensor_id = self.args['price_sensor_id']
@@ -228,6 +233,19 @@ class SmartPriceCharge(hass.Hass):
         self._battery_stored_kwh = 0.0
         self._battery_avg_buy_price = 0.25
 
+        self._pv_day = None
+        self._pv_measured_kwh = 0.0
+        self._pv_fc_total = None
+        self._pv_partial = False
+        self._pv_last_ts = None
+        self._pv_history = []
+        self._pv_auto_factor = None
+        try:
+            self._calib_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pv_calibration.json')
+        except Exception:
+            self._calib_file = None
+        self._load_pv_history()
+
         if not all([self.price_sensor_id, self.current_soc_sensor_id, self.inverter_mode_entity_id]):
             self.log("ERROR: Essential IDs missing!", level="ERROR")
             return
@@ -247,6 +265,7 @@ class SmartPriceCharge(hass.Hass):
         self.run_every(self.main_logic, next_min, 60)
         self.run_daily(self.reset_monthly_stats_daily_check, time(0, 1, 0))
         self.run_daily(self.check_weekly_ai_trigger, time(18, 0, 0))
+        self.run_daily(self._log_pv_calibration, time(22, 0, 0))
         self.listen_event(self.trigger_ai_analysis, "trigger_ai_analysis")
         if getattr(self, 'ai_trigger_button_id', None):
             self.listen_state(self.trigger_ai_analysis_button, self.ai_trigger_button_id)
@@ -549,6 +568,90 @@ class SmartPriceCharge(hass.Hass):
                 return peak
         return peak
 
+    # ==========================================================
+    # PV-KALIBRIERUNG (Prognose vs. gemessen)
+    # ==========================================================
+    def _load_pv_history(self):
+        try:
+            if self._calib_file and os.path.exists(self._calib_file):
+                with open(self._calib_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self._pv_history = [e for e in data if isinstance(e, dict) and 'forecast' in e and 'measured' in e][-30:]
+        except Exception:
+            self._pv_history = []
+        self._update_pv_auto_factor()
+
+    def _save_pv_history(self):
+        try:
+            if self._calib_file:
+                with open(self._calib_file, 'w', encoding='utf-8') as f:
+                    json.dump(self._pv_history[-30:], f)
+        except Exception as e:
+            if self.log_debug_level:
+                self.log(f"PV-Kalibrierung: Speichern fehlgeschlagen: {e}", level="WARNING")
+
+    def _pv_ratio_recent(self, n=7):
+        recent = self._pv_history[-n:]
+        fc_sum = sum(e['forecast'] for e in recent)
+        if len(recent) == 0 or fc_sum <= 0:
+            return None, len(recent)
+        return sum(e['measured'] for e in recent) / fc_sum, len(recent)
+
+    def _update_pv_auto_factor(self):
+        ratio, n = self._pv_ratio_recent()
+        self._pv_auto_factor = None
+        if self.pv_auto_calibrate and ratio is not None and n >= 3:
+            self._pv_auto_factor = max(0.3, min(1.0, 0.7 * ratio))
+
+    def _pv_track(self, now, cur_pv, fc_rem):
+        """Summiert die gemessene PV-Energie des Tages und merkt sich die Prognose vom Morgen."""
+        today = now.date()
+        if self._pv_day != today:
+            self._pv_day = today
+            self._pv_measured_kwh = 0.0
+            self._pv_fc_total = None
+            self._pv_partial = now.hour >= 5          # App nach 05:00 gestartet -> Tagessumme unvollständig
+            self._pv_last_ts = None
+        if self._pv_last_ts is not None:
+            dt_h = min(5.0 / 60.0, max(0.0, (now - self._pv_last_ts).total_seconds() / 3600.0))
+            self._pv_measured_kwh += max(0.0, cur_pv) / 1000.0 * dt_h
+        self._pv_last_ts = now
+        if self._pv_fc_total is None and now.hour >= 4:
+            total = self._get_float_state(self.pv_forecast_today_sensor_id, default=0.0) if self.pv_forecast_today_sensor_id else 0.0
+            if not total or total <= 0:
+                total = fc_rem          # Fallback: Rest-Prognose am frühen Morgen entspricht der Tagessumme
+            if total and total > 0:
+                self._pv_fc_total = total
+
+    def _log_pv_calibration(self, kwargs):
+        now = self.get_now()
+        fc = self._pv_fc_total
+        meas = self._pv_measured_kwh
+        partial = self._pv_partial
+        if self.pv_energy_today_sensor_id:
+            val = self._get_float_state(self.pv_energy_today_sensor_id, default=0.0)
+            if val > 0:
+                meas, partial = val, False
+        if not fc or fc < 0.2 or meas is None:
+            self.log("PV-Kalibrierung: keine verwertbaren Daten für heute (Prognose fehlt oder App zu spät gestartet).", level="INFO")
+            return
+        ratio = meas / fc
+        if partial:
+            self.log(f"PV-Kalibrierung {now.strftime('%d.%m.')}: Prognose {fc:.1f} kWh, gemessen {meas:.1f} kWh (unvollständig, App nach 05:00 gestartet - nicht gewertet)", level="INFO")
+            return
+        self._pv_history = [e for e in self._pv_history if e.get('date') != now.strftime('%Y-%m-%d')]
+        self._pv_history.append({'date': now.strftime('%Y-%m-%d'), 'forecast': round(fc, 2), 'measured': round(meas, 2)})
+        self._pv_history = self._pv_history[-30:]
+        self._save_pv_history()
+        self._update_pv_auto_factor()
+        avg, n = self._pv_ratio_recent()
+        hint = ""
+        if avg is not None and n >= 3:
+            suggestion = max(0.3, min(1.0, 0.7 * avg))
+            hint = f" | Ø letzte {n} Tage: Faktor {avg:.2f} -> Richtwert pv_forecast_safety_factor ca. {suggestion:.2f} (aktuell {self.pv_forecast_safety_factor:.2f}{', automatisch ' + format(self._pv_auto_factor, '.2f') if self._pv_auto_factor else ''})"
+        self.log(f"PV-Kalibrierung {now.strftime('%d.%m.')}: Prognose {fc:.1f} kWh, gemessen {meas:.1f} kWh (Faktor {ratio:.2f}){hint}", level="INFO")
+
     def _sun_time(self, attr, now):
         """Liest next_rising / next_setting von sun.sun als zeitzonenbewusstes datetime (oder None)."""
         if not self.sun_sensor_id:
@@ -712,6 +815,7 @@ class SmartPriceCharge(hass.Hass):
         cur_batt_pwr = self._get_float_state(self.battery_power_sensor_id, default=0.0)
         cur_grid = self._get_float_state(self.grid_power_import_export_sensor_id, default=0.0)
         cur_house = self._get_float_state(self.current_house_consumption_w_id, default=300.0)
+        self._pv_track(now, cur_pv, self._get_float_state(self.pv_forecast_today_remaining_id, default=0.0))
 
         dod = self._get_float_state(self.min_soc_discharge_id, default=90.0)
         base_min_soc = (100.0 - dod) if dod > 50.0 else dod
@@ -961,6 +1065,7 @@ class SmartPriceCharge(hass.Hass):
         pv_hours = 0.0
         pv_fc_kwh = 0.0
         plan_load_w = 0.0
+        pv_sf = self._pv_auto_factor if (self.pv_auto_calibrate and self._pv_auto_factor) else self.pv_forecast_safety_factor
         if not morning_bridge_active:
             # Im Hold bleibt die Batterieenergie bis zum Peak erhalten. Gutschreiben darf man nur den
             # PV-ÜBERSCHUSS (Prognose minus Hausverbrauch während der PV-Stunden), nicht die gesamte PV.
@@ -970,7 +1075,7 @@ class SmartPriceCharge(hass.Hass):
             avg_24h_w = max(200.0, min(self.max_load_w, self._get_float_state(self.avg_consumption_sensor_id, default=500.0)))
             plan_load_w = max(200.0, 0.5 * avg_24h_w + 0.5 * min(self.max_load_w, cur_house))
             if pv_hours > 0:
-                pv_surplus_kwh = max(0.0, pv_fc_kwh * pv_share - (plan_load_w / 1000.0) * pv_hours) * self.pv_forecast_safety_factor
+                pv_surplus_kwh = max(0.0, pv_fc_kwh * pv_share - (plan_load_w / 1000.0) * pv_hours) * pv_sf
 
         def _slots_for(need_kwh):
             return min(int(math.ceil((need_kwh / charge_pwr) * 4)) if charge_pwr > 0 else 0, user_intervals)
@@ -1051,7 +1156,7 @@ class SmartPriceCharge(hass.Hass):
         if self.log_debug_level:
             self.log(
                 f"PLAN: {'Morgen-Brücke' if morning_bridge_active else 'Peak'} {deadline.strftime('%d.%m %H:%M')} @{plan_peak_price:.3f} (Max {max_future_price:.3f}, Grenze {price_discharge_limit:.3f}/Schwelle {price_discharge_limit_user:.2f}) | "
-                f"Bedarf {need_soc_kwh:.1f}kWh - PV-Überschuss {pv_surplus_kwh:.1f}kWh (PV {pv_fc_kwh:.1f}kWh, {pv_hours:.1f}h, Last {plan_load_w:.0f}W) "
+                f"Bedarf {need_soc_kwh:.1f}kWh - PV-Überschuss {pv_surplus_kwh:.1f}kWh (PV {pv_fc_kwh:.1f}kWh, {pv_hours:.1f}h, Last {plan_load_w:.0f}W, Faktor {pv_sf:.2f}) "
                 f"= {needed_kwh:.1f}kWh -> {slots_uncapped} Slots (Limit {user_intervals}, Pool {len(pool)}, max. Kaufpreis {max_buy_price:.3f}) | "
                 f"Hold={should_hold} (Spread {cur_spread:.3f}/{eff_spread:.2f}, Dip={interim_dip}) Ziel-SoC {target_soc:.0f}%{hump_info}",
                 level="INFO")

@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.5 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.6 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -13,7 +13,7 @@ import re
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.5"
+APP_VERSION = "6.8.6"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -48,7 +48,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.5 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.6 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -73,7 +73,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.5 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.6 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -1416,6 +1416,8 @@ class SmartPriceCharge(hass.Hass):
     def _perform_gemini_analysis(self) -> None:
         if not self.gemini_api_key:
             return
+        last_model = None
+        t_start = datetime.now()
         try:
             def _get_live(eid):
                 if not eid:
@@ -1456,15 +1458,26 @@ class SmartPriceCharge(hass.Hass):
 
             def _call(model):
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-                return requests.post(url, json=payload, headers=headers, timeout=30)
+                return requests.post(url, json=payload, headers=headers, timeout=120)
 
             model = self._gemini_model_active or self.gemini_model
-            response = _call(model)
+            last_model = model
+            try:
+                response = _call(model)
+            except requests.exceptions.Timeout:
+                self.log(f"KI-Modell '{model}' antwortet nicht (120 s) -> versuche neuestes Flash-Modell", level="WARNING")
+                alt = self._gemini_pick_model()
+                if not alt or alt == model:
+                    raise
+                model = alt
+                last_model = model
+                response = _call(model)
             if response.status_code == 404:
                 alt = self._gemini_pick_model()
                 if alt and alt != model:
                     self.log(f"KI-Modell '{model}' nicht verfügbar (404) -> verwende '{alt}'", level="WARNING")
                     model = alt
+                    last_model = model
                     response = _call(model)
             if response.status_code != 200:
                 self.log(f"KI-Request fehlgeschlagen: HTTP {response.status_code} bei Modell '{model}': {response.text[:300]}", level="ERROR")
@@ -1483,9 +1496,11 @@ class SmartPriceCharge(hass.Hass):
                 advice = advice[:252] + "..."
             if self.ai_advice_text_id:
                 self.set_state(self.ai_advice_text_id, state=advice)
-            self.log(f"KI-Empfehlung aktualisiert (Modell {model})", level="INFO")
+            dauer = (datetime.now() - t_start).total_seconds()
+            self.log(f"KI-Empfehlung aktualisiert (Modell {model}, {dauer:.0f} s)", level="INFO")
         except Exception as e:
-            self.log(f"KI-Request fehlgeschlagen: {e}", level="ERROR")
+            dauer = (datetime.now() - t_start).total_seconds()
+            self.log(f"KI-Request fehlgeschlagen (Modell '{last_model}', nach {dauer:.0f} s): {e}", level="ERROR")
 
     def terminate(self):
         self.log(f"INFO: {self.T['INFO_APP_TERMINATED']}", level="INFO")

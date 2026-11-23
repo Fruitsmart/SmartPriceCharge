@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.6 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.7 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -10,10 +10,11 @@ import json
 import math
 import os
 import re
+from time import sleep as _sleep
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.6"
+APP_VERSION = "6.8.7"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -48,7 +49,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.6 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.7 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -73,7 +74,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.6 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.7 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -1398,14 +1399,16 @@ class SmartPriceCharge(hass.Hass):
         self.log("KI-Analyse: Starte Daten-Sammlung...", level="INFO")
         threading.Thread(target=self._perform_gemini_analysis).start()
 
-    def _gemini_pick_model(self):
-        """Fragt die für den Schlüssel verfügbaren Modelle ab und liefert das neueste Flash-Modell mit generateContent."""
+    def _gemini_pick_model(self, exclude=None):
+        """Fragt die für den Schlüssel verfügbaren Modelle ab und liefert das neueste Flash-Modell mit generateContent (ohne 'exclude')."""
         resp = requests.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
                             headers={"x-goog-api-key": self.gemini_api_key}, timeout=15)
         resp.raise_for_status()
         best, best_v = None, (-1, -1)
         for m in resp.json().get('models', []):
             name = str(m.get('name', '')).replace('models/', '')
+            if name == exclude:
+                continue
             mt = re.match(r"^gemini-(\d+)\.(\d+)-flash$", name)
             if mt and 'generateContent' in m.get('supportedGenerationMethods', []):
                 v = (int(mt.group(1)), int(mt.group(2)))
@@ -1476,6 +1479,20 @@ class SmartPriceCharge(hass.Hass):
                 alt = self._gemini_pick_model()
                 if alt and alt != model:
                     self.log(f"KI-Modell '{model}' nicht verfügbar (404) -> verwende '{alt}'", level="WARNING")
+                    model = alt
+                    last_model = model
+                    response = _call(model)
+            # Überlastung (429/500/503) ist vorübergehend: erst mehrfach warten, dann ein anderes Modell
+            for wait_s in (15, 30):
+                if response.status_code not in (429, 500, 503):
+                    break
+                self.log(f"KI-Modell '{model}' überlastet (HTTP {response.status_code}) -> neuer Versuch in {wait_s} s", level="WARNING")
+                _sleep(wait_s)
+                response = _call(model)
+            if response.status_code in (429, 500, 503):
+                alt = self._gemini_pick_model(exclude=model)
+                if alt:
+                    self.log(f"KI-Modell '{model}' bleibt überlastet -> versuche '{alt}'", level="WARNING")
                     model = alt
                     last_model = model
                     response = _call(model)

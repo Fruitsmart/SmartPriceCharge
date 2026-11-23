@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.4 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.5 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -9,10 +9,11 @@ import requests
 import json
 import math
 import os
+import re
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.4"
+APP_VERSION = "6.8.5"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -47,7 +48,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.4 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.5 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -72,7 +73,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.4 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.5 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -212,10 +213,10 @@ class SmartPriceCharge(hass.Hass):
         self.pv_savings_total_id = self.args.get('pv_savings_total_id', None)
 
         # KI Integration
-        raw_model = str(self.args.get('gemini_model', 'gemini-2.5-flash')).strip()
-        if "3.5" in raw_model:
-            raw_model = "gemini-2.5-flash"
-        self.gemini_model = raw_model
+        # Modellname wird unverändert übernommen. Ist er für den Schlüssel nicht verfügbar (404),
+        # wählt die App automatisch das neueste verfügbare Flash-Modell (siehe _gemini_pick_model).
+        self.gemini_model = str(self.args.get('gemini_model', 'gemini-2.5-flash')).strip()
+        self._gemini_model_active = None
         self.gemini_api_key = self.args.get('gemini_api_key', None)
         self.ai_trigger_button_id = self.args.get('ai_trigger_button_id', None)
         self.ai_advice_text_id = self.args.get('ai_advice_text_id', None)
@@ -1397,6 +1398,21 @@ class SmartPriceCharge(hass.Hass):
         self.log("KI-Analyse: Starte Daten-Sammlung...", level="INFO")
         threading.Thread(target=self._perform_gemini_analysis).start()
 
+    def _gemini_pick_model(self):
+        """Fragt die für den Schlüssel verfügbaren Modelle ab und liefert das neueste Flash-Modell mit generateContent."""
+        resp = requests.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
+                            headers={"x-goog-api-key": self.gemini_api_key}, timeout=15)
+        resp.raise_for_status()
+        best, best_v = None, (-1, -1)
+        for m in resp.json().get('models', []):
+            name = str(m.get('name', '')).replace('models/', '')
+            mt = re.match(r"^gemini-(\d+)\.(\d+)-flash$", name)
+            if mt and 'generateContent' in m.get('supportedGenerationMethods', []):
+                v = (int(mt.group(1)), int(mt.group(2)))
+                if v > best_v:
+                    best, best_v = name, v
+        return best
+
     def _perform_gemini_analysis(self) -> None:
         if not self.gemini_api_key:
             return
@@ -1435,24 +1451,41 @@ class SmartPriceCharge(hass.Hass):
                 f"Geladene Netz-Energie (Akku): {kwh:.2f} kWh. Ø-Speicher-Einkaufspreis: {self._battery_avg_buy_price:.3f} EUR. "
                 "Gib eine kurze, prägnante Einschätzung (1-2 Sätze) für den Hausbesitzer."
             )
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.gemini_model}:generateContent"
-            headers = {
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.gemini_api_key
-            }
             payload = {"contents": [{"parts": [{"text": prompt}]}]}
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            response.raise_for_status()
+            headers = {"Content-Type": "application/json", "x-goog-api-key": self.gemini_api_key}
+
+            def _call(model):
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                return requests.post(url, json=payload, headers=headers, timeout=30)
+
+            model = self._gemini_model_active or self.gemini_model
+            response = _call(model)
+            if response.status_code == 404:
+                alt = self._gemini_pick_model()
+                if alt and alt != model:
+                    self.log(f"KI-Modell '{model}' nicht verfügbar (404) -> verwende '{alt}'", level="WARNING")
+                    model = alt
+                    response = _call(model)
+            if response.status_code != 200:
+                self.log(f"KI-Request fehlgeschlagen: HTTP {response.status_code} bei Modell '{model}': {response.text[:300]}", level="ERROR")
+                return
+            self._gemini_model_active = model
+
             result = response.json()
-            advice = result['candidates'][0]['content']['parts'][0]['text']
+            cand = result['candidates'][0]
+            parts = cand.get('content', {}).get('parts', [])
+            advice = ' '.join(p.get('text', '') for p in parts if not p.get('thought')).strip()
+            if not advice:
+                self.log(f"KI-Antwort leer (finishReason: {cand.get('finishReason', '?')})", level="ERROR")
+                return
             advice = advice.replace('\n', ' ').strip()
             if len(advice) > 255:
                 advice = advice[:252] + "..."
             if self.ai_advice_text_id:
                 self.set_state(self.ai_advice_text_id, state=advice)
+            self.log(f"KI-Empfehlung aktualisiert (Modell {model})", level="INFO")
         except Exception as e:
-            if self.log_debug_level:
-                self.log(f"KI-Request fehlgeschlagen: {e}", level="ERROR")
+            self.log(f"KI-Request fehlgeschlagen: {e}", level="ERROR")
 
     def terminate(self):
         self.log(f"INFO: {self.T['INFO_APP_TERMINATED']}", level="INFO")

@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.9.0 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.9.1 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -14,7 +14,7 @@ from time import sleep as _sleep
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.9.0"
+APP_VERSION = "6.9.1"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -49,7 +49,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.9.0 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.1 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -74,7 +74,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.9.0 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.1 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -129,6 +129,8 @@ class SmartPriceCharge(hass.Hass):
         self.ev_compare_to_h = int(self.args.get('ev_compare_to_h', 15))
         self.tibber_wb_kwh_id = self.args.get('tibber_wallbox_kwh_id', 'sensor.tibber_wallbox_kwh_monat')
         self.tibber_wb_cost_id = self.args.get('tibber_wallbox_kosten_id', 'sensor.tibber_wallbox_kosten_monat')
+        # Wallbox-Leistung (W): Hausverbrauch enthält die Wallbox, daher wird sie für die Hausersparnis herausgerechnet
+        self.wallbox_power_sensor_id = self.args.get('wallbox_power_sensor_id', 'sensor.goe_315255_nrg_11')
         self.pv_auto_calibrate = bool(self.args.get('pv_auto_calibrate', False))               # True: Sicherheitsfaktor aus den letzten Tagen ableiten
 
         # Basis & GoodWe Sensoren
@@ -777,9 +779,14 @@ class SmartPriceCharge(hass.Hass):
         if self._battery_stored_kwh > batt_cap:
             self._battery_stored_kwh = batt_cap
 
-        if cur_pv > 0 and cur_house > 0:
-            direct_pv_kwh = (min(cur_pv, cur_house) / 1000.0) * (1.0 / 60.0)
-            pv_direct_save = direct_pv_kwh * cur_price
+        # Auto herausrechnen: Hausverbrauch enthält die Wallbox. PV-Direkt zählt nur das Haus,
+        # und PV-Direkt wird gegen die entgangene Einspeisung bewertet (Preis minus Einspeisevergütung).
+        wb_w = self._get_float_state(self.wallbox_power_sensor_id, default=0.0)
+        car_charging = wb_w > 500.0
+        house_wo_car = max(0.0, cur_house - wb_w)
+        if cur_pv > 0 and house_wo_car > 0:
+            direct_pv_kwh = (min(cur_pv, house_wo_car) / 1000.0) * (1.0 / 60.0)
+            pv_direct_save = direct_pv_kwh * max(0.0, cur_price - self.feed_in_price_eur)
             self._set_tracking_state(self.pv_savings_month_id, self._get_tracking_state(self.pv_savings_month_id) + pv_direct_save)
             self._set_tracking_state(self.pv_savings_total_id, self._get_tracking_state(self.pv_savings_total_id) + pv_direct_save)
 
@@ -816,7 +823,9 @@ class SmartPriceCharge(hass.Hass):
 
             self._battery_stored_kwh = max(0.0, self._battery_stored_kwh - kwh_needed_from_store)
 
-            if real_profit > 0:
+            # Während das Auto lädt, geht Akkustrom teils ins Auto. Dieser Anteil ist nicht Hausersparnis
+            # (konservativ: in diesen Minuten wird keine Entladeersparnis gebucht; die kWh werden trotzdem abgezogen).
+            if real_profit > 0 and not car_charging:
                 self._set_tracking_state(self.discharge_savings_month_id, self._get_tracking_state(self.discharge_savings_month_id) + real_profit)
                 self._set_tracking_state(self.discharge_savings_total_id, self._get_tracking_state(self.discharge_savings_total_id) + real_profit)
 

@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.8 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.9.0 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -14,7 +14,7 @@ from time import sleep as _sleep
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.8"
+APP_VERSION = "6.9.0"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -49,7 +49,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.8 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.0 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -74,7 +74,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.8 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.0 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -123,6 +123,12 @@ class SmartPriceCharge(hass.Hass):
         # PV-Kalibrierung: vergleicht abends die Tagesprognose mit der gemessenen PV-Erzeugung
         self.pv_forecast_today_sensor_id = self.args.get('pv_forecast_today_sensor_id', None)  # Solcast 'Prognose heute' (Tagessumme, kWh)
         self.pv_energy_today_sensor_id = self.args.get('pv_energy_today_sensor_id', None)      # PV-Tagesertrag des Wechselrichters (kWh), optional
+        # Auto-Ersparnis & Einspeise-Einstand (v6.9)
+        self.feed_in_price_eur = float(self.args.get('feed_in_price_eur', 0.08))   # entgangene Einspeisung = Einstand von PV-Strom im Akku
+        self.ev_compare_from_h = int(self.args.get('ev_compare_from_h', 14))       # Anstecker-Fenster (Vergleichspreis fürs Auto)
+        self.ev_compare_to_h = int(self.args.get('ev_compare_to_h', 15))
+        self.tibber_wb_kwh_id = self.args.get('tibber_wallbox_kwh_id', 'sensor.tibber_wallbox_kwh_monat')
+        self.tibber_wb_cost_id = self.args.get('tibber_wallbox_kosten_id', 'sensor.tibber_wallbox_kosten_monat')
         self.pv_auto_calibrate = bool(self.args.get('pv_auto_calibrate', False))               # True: Sicherheitsfaktor aus den letzten Tagen ableiten
 
         # Basis & GoodWe Sensoren
@@ -247,6 +253,9 @@ class SmartPriceCharge(hass.Hass):
         except Exception:
             self._calib_file = None
         self._load_pv_history()
+        self._ev_file = self.args.get('ev_stats_file') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ev_stats.json')
+        self._ev_days = {}
+        self._ev_load()
 
         if not all([self.price_sensor_id, self.current_soc_sensor_id, self.inverter_mode_entity_id]):
             self.log("ERROR: Essential IDs missing!", level="ERROR")
@@ -700,6 +709,65 @@ class SmartPriceCharge(hass.Hass):
         uses_tomorrow = (not is_daylight) and start.astimezone(now.tzinfo).date() > now.date()
         return hrs, min(1.0, hrs / day_h), uses_tomorrow
 
+    # ==========================================================
+    # AUTO-ERSPARNIS (v6.9): Ø-Preis im Anstecker-Fenster vs. tatsächlich bezahlter Ø-Preis
+    # ==========================================================
+    def _ev_load(self):
+        try:
+            if self._ev_file and os.path.exists(self._ev_file):
+                with open(self._ev_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get('days'), dict):
+                    self._ev_days = {k: float(v) for k, v in data['days'].items()}
+        except Exception:
+            self._ev_days = {}
+
+    def _ev_save(self):
+        try:
+            if self._ev_file:
+                with open(self._ev_file, 'w', encoding='utf-8') as f:
+                    json.dump({'days': self._ev_days}, f)
+        except Exception as e:
+            if self.log_debug_level:
+                self.log(f"EV-Statistik: Speichern fehlgeschlagen: {e}", level="WARNING")
+
+    def _ev_update(self, now, prices_today):
+        """Merkt sich den Ø-Preis des Anstecker-Fensters pro Tag und schreibt die Auto-Kennzahlen als Sensoren."""
+        day_key = now.strftime('%Y-%m-%d')
+        prefix = now.strftime('%Y-%m')
+        window = []
+        for i, p in enumerate(prices_today if isinstance(prices_today, list) else []):
+            if isinstance(p, dict) and 'total' in p:
+                dt = self._parse_slot_time(p, i, now.date(), now.tzinfo)
+                if dt.date() == now.date() and self.ev_compare_from_h <= dt.hour < self.ev_compare_to_h:
+                    window.append(float(p['total']))
+        if window:
+            avg = round(sum(window) / len(window), 5)
+            if abs(self._ev_days.get(day_key, -1.0) - avg) > 1e-9:
+                self._ev_days = {k: v for k, v in self._ev_days.items() if k.startswith(prefix)}
+                self._ev_days[day_key] = avg
+                self._ev_save()
+
+        vals = [v for k, v in self._ev_days.items() if k.startswith(prefix)]
+        vergleich = (sum(vals) / len(vals)) if vals else None
+        kwh = self._get_float_state(self.tibber_wb_kwh_id, default=0.0)
+        cost = self._get_float_state(self.tibber_wb_cost_id, default=0.0)
+        ist = (cost / kwh) if kwh > 0.5 else None
+        ersparnis = (kwh * (vergleich - ist)) if (vergleich is not None and ist is not None) else None
+
+        def _put(eid, val, unit, name, icon, dec):
+            if val is None:
+                return
+            try:
+                self.set_state(eid, state=str(round(val, dec)), attributes={"unit_of_measurement": unit, "friendly_name": name, "icon": icon})
+            except Exception as e:
+                if self.log_debug_level:
+                    self.log(f"EV-Sensor {eid}: {e}", level="WARNING")
+
+        _put('sensor.smart_ev_ist_preis_monat', ist, '€/kWh', 'Auto: bezahlt Ø pro kWh (Monat)', 'mdi:currency-eur', 4)
+        _put('sensor.smart_ev_vergleichspreis_monat', vergleich, '€/kWh', f'Auto: Ø-Preis {self.ev_compare_from_h}-{self.ev_compare_to_h} Uhr (Monat)', 'mdi:clock-outline', 4)
+        _put('sensor.smart_ev_ersparnis_monat', ersparnis, '€', 'Auto: Ersparnis gegen Anstecker-Preis (Monat)', 'mdi:piggy-bank', 2)
+
     def _update_tracking_stats(self, cur_price, cur_pv, cur_batt_pwr, cur_house):
         batt_cap = self._get_float_state(self.battery_capacity_kwh_id, default=7.5)
         ref_price = self._get_float_state(self.reference_price_id, default=0.40)
@@ -721,7 +789,8 @@ class SmartPriceCharge(hass.Hass):
             pv_part_kwh = min(charged_kwh_min, (pv_surplus_w / 1000.0) * (1.0 / 60.0))
             grid_part_kwh = max(0.0, charged_kwh_min - pv_part_kwh)
 
-            cost_this_minute = grid_part_kwh * cur_price
+            # Einstand: Netzstrom zum Tarifpreis, PV-Strom zur entgangenen Einspeisung (nicht 0 €)
+            cost_this_minute = grid_part_kwh * cur_price + pv_part_kwh * self.feed_in_price_eur
             total_cost_before = self._battery_stored_kwh * self._battery_avg_buy_price
             new_total_stored = self._battery_stored_kwh + charged_kwh_min
 
@@ -732,11 +801,8 @@ class SmartPriceCharge(hass.Hass):
 
             if grid_part_kwh > 0:
                 cost = grid_part_kwh * cur_price
-                saved_vs_ref = grid_part_kwh * max(0.0, ref_price - cur_price)
                 self._set_tracking_state(self.cost_month_id, self._get_tracking_state(self.cost_month_id) + cost)
                 self._set_tracking_state(self.cost_total_id, self._get_tracking_state(self.cost_total_id) + cost)
-                self._set_tracking_state(self.savings_month_id, self._get_tracking_state(self.savings_month_id) + saved_vs_ref)
-                self._set_tracking_state(self.savings_total_id, self._get_tracking_state(self.savings_total_id) + saved_vs_ref)
                 self._set_tracking_state(self.charged_kwh_month_id, self._get_tracking_state(self.charged_kwh_month_id) + grid_part_kwh, 4)
                 self._set_tracking_state(self.charged_kwh_total_id, self._get_tracking_state(self.charged_kwh_total_id) + grid_part_kwh, 4)
 
@@ -784,7 +850,6 @@ class SmartPriceCharge(hass.Hass):
         report = (
             f"Monat ({now.strftime('%B %Y')}):\n"
             f"{self.T['REPORT_GRID_COST']}: {self._get_tracking_state(self.cost_month_id):.2f} EUR\n"
-            f"{self.T['REPORT_CHARGE_SAVE']}: {self._get_tracking_state(self.savings_month_id):.2f} EUR\n"
             f"{self.T['REPORT_DISCHARGE_VALUE']}: {self._get_tracking_state(self.discharge_savings_month_id):.2f} EUR\n"
             f"{self.T['REPORT_PV_VALUE']}: {self._get_tracking_state(self.pv_savings_month_id):.2f} EUR\n"
             f"{self.T['REPORT_CHARGED_KWH']}: {self._get_tracking_state(self.charged_kwh_month_id):.2f} kWh\n"
@@ -1384,6 +1449,7 @@ class SmartPriceCharge(hass.Hass):
             self.set_state(self.cheap_hours_text_id, state=cheap_hours_info)
 
         self._update_tracking_stats(cur_price, cur_pv, cur_batt_pwr, cur_house)
+        self._ev_update(now, prices_today)
 
     def check_weekly_ai_trigger(self, kwargs):
         if self.gemini_api_key:
@@ -1437,8 +1503,8 @@ class SmartPriceCharge(hass.Hass):
             pv_saved = _get_live(self.pv_savings_month_id)
             kwh = _get_live(self.charged_kwh_month_id)
 
-            # Dieselbe Definition wie im Dashboard ("Ersparnis gesamt (Laden + Entladen)"); PV-Direkt wird separat genannt
-            total_saved = saved + discharge_saved
+            # Entladen-Gewinn + PV-Direkt (Laden-Ersparnis entfällt seit v6.9)
+            total_saved = discharge_saved + pv_saved
 
             self.log(
                 f"KI-Analyse Live-Daten: Cost={cost:.2f}€, ChargeSave={saved:.2f}€, "
@@ -1453,8 +1519,7 @@ class SmartPriceCharge(hass.Hass):
 
             prompt = (
                 f"Smart Home Energieberater: Netzkosten: {cost:.2f} EUR. "
-                f"Ersparnis Laden + Entladen: {total_saved:.2f} EUR (Laden: {saved:.2f} EUR, Entladen: {discharge_saved:.2f} EUR). "
-                f"PV-Direkt separat: {pv_saved:.2f} EUR. "
+                f"Ersparnis Entladen + PV-Direkt: {total_saved:.2f} EUR (Entladen: {discharge_saved:.2f} EUR, PV-Direkt: {pv_saved:.2f} EUR). "
                 f"Geladene Netz-Energie (Akku): {kwh:.2f} kWh. Ø-Speicher-Einkaufspreis: {self._battery_avg_buy_price:.3f} EUR. "
                 "Gib eine kurze, prägnante Einschätzung (1-2 Sätze) für den Hausbesitzer."
             )

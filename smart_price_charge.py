@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.9.1 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.9.2 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -14,7 +14,7 @@ from time import sleep as _sleep
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.9.1"
+APP_VERSION = "6.9.2"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -49,7 +49,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.9.1 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.2 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -74,7 +74,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.9.1 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.2 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -769,6 +769,12 @@ class SmartPriceCharge(hass.Hass):
         _put('sensor.smart_ev_ist_preis_monat', ist, '€/kWh', 'Auto: bezahlt Ø pro kWh (Monat)', 'mdi:currency-eur', 4)
         _put('sensor.smart_ev_vergleichspreis_monat', vergleich, '€/kWh', f'Auto: Ø-Preis {self.ev_compare_from_h}-{self.ev_compare_to_h} Uhr (Monat)', 'mdi:clock-outline', 4)
         _put('sensor.smart_ev_ersparnis_monat', ersparnis, '€', 'Auto: Ersparnis gegen Anstecker-Preis (Monat)', 'mdi:piggy-bank', 2)
+
+        # Gesamt = Haus (Entladen + PV-Direkt, ohne Auto) + Auto (Ersparnis gegen Anstecker-Preis)
+        haus = self._get_tracking_state(self.discharge_savings_month_id) + self._get_tracking_state(self.pv_savings_month_id)
+        _put('sensor.smart_ersparnis_haus_monat', haus, '€', 'Ersparnis Haus (Entladen + PV-Direkt, Monat)', 'mdi:home-lightning-bolt', 2)
+        if ersparnis is not None:
+            _put('sensor.smart_ersparnis_gesamt_monat', haus + ersparnis, '€', 'Ersparnis gesamt: Haus + Auto (Monat)', 'mdi:piggy-bank-outline', 2)
 
     def _update_tracking_stats(self, cur_price, cur_pv, cur_batt_pwr, cur_house):
         batt_cap = self._get_float_state(self.battery_capacity_kwh_id, default=7.5)

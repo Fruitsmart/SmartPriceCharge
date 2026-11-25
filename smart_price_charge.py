@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.8.7 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.8.8 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -14,7 +14,7 @@ from time import sleep as _sleep
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.8.7"
+APP_VERSION = "6.8.8"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -49,7 +49,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.7 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.8 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -74,7 +74,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.8.7 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.8.8 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -1437,7 +1437,8 @@ class SmartPriceCharge(hass.Hass):
             pv_saved = _get_live(self.pv_savings_month_id)
             kwh = _get_live(self.charged_kwh_month_id)
 
-            total_saved = discharge_saved + pv_saved
+            # Dieselbe Definition wie im Dashboard ("Ersparnis gesamt (Laden + Entladen)"); PV-Direkt wird separat genannt
+            total_saved = saved + discharge_saved
 
             self.log(
                 f"KI-Analyse Live-Daten: Cost={cost:.2f}€, ChargeSave={saved:.2f}€, "
@@ -1452,7 +1453,8 @@ class SmartPriceCharge(hass.Hass):
 
             prompt = (
                 f"Smart Home Energieberater: Netzkosten: {cost:.2f} EUR. "
-                f"Gesamtersparnis: {total_saved:.2f} EUR (Arbitrage-Gewinn: {discharge_saved:.2f} EUR, PV-Direkt: {pv_saved:.2f} EUR). "
+                f"Ersparnis Laden + Entladen: {total_saved:.2f} EUR (Laden: {saved:.2f} EUR, Entladen: {discharge_saved:.2f} EUR). "
+                f"PV-Direkt separat: {pv_saved:.2f} EUR. "
                 f"Geladene Netz-Energie (Akku): {kwh:.2f} kWh. Ø-Speicher-Einkaufspreis: {self._battery_avg_buy_price:.3f} EUR. "
                 "Gib eine kurze, prägnante Einschätzung (1-2 Sätze) für den Hausbesitzer."
             )

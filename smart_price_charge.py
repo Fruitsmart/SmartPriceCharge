@@ -1,5 +1,5 @@
 # ==============================================================================
-# SmartPriceCharge (v6.9.2 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
+# SmartPriceCharge (v6.9.3 - bedarfsorientiertes Ladeziel, Peak-Absicherung, PV-Bilanz)
 # ==============================================================================
 # AppDaemon Application for Intelligent Battery & EV Charging with Tibber & GoodWe
 # ==============================================================================
@@ -14,7 +14,7 @@ from time import sleep as _sleep
 import threading
 from datetime import datetime, time, timedelta
 
-APP_VERSION = "6.9.2"
+APP_VERSION = "6.9.3"
 
 WEATHER_PV_FACTOR = {
     'sunny': 1.0,
@@ -49,7 +49,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Warten (Spread-Hold)",
         'STATUS_WAIT_PV': "Warten auf PV-Überschuss",
         'STATUS_IDLE': "Standby / Normalbetrieb",
-        'INFO_APP_INIT': "SmartPriceCharge v6.9.2 gestartet",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.3 gestartet",
         'INFO_APP_TERMINATED': "SmartPriceCharge beendet",
         'ERROR_NO_PRICE_DATA': "Fehler: Keine Preisdaten von Tibber verfügbar!",
     },
@@ -74,7 +74,7 @@ TRANSLATIONS = {
         'STATUS_WAIT_HOLD': "Holding Battery (Spread-Hold)",
         'STATUS_WAIT_PV': "Waiting for PV Surplus",
         'STATUS_IDLE': "Idle / General Mode",
-        'INFO_APP_INIT': "SmartPriceCharge v6.9.2 initialized",
+        'INFO_APP_INIT': "SmartPriceCharge v6.9.3 initialized",
         'INFO_APP_TERMINATED': "SmartPriceCharge terminated",
         'ERROR_NO_PRICE_DATA': "Error: No price data available from Tibber!",
     }
@@ -1532,11 +1532,27 @@ class SmartPriceCharge(hass.Hass):
                     self.set_state(self.ai_advice_text_id, state="Keine aktuellen Statistikdaten in Home Assistant gefunden.")
                 return
 
+            auto_kwh = self._get_float_state(self.tibber_wb_kwh_id, default=0.0)
+            auto_ist = self._get_float_state('sensor.smart_ev_ist_preis_monat', default=0.0)
+            auto_vgl = self._get_float_state('sensor.smart_ev_vergleichspreis_monat', default=0.0)
+            auto_sav = self._get_float_state('sensor.smart_ev_ersparnis_monat', default=0.0)
+            haus = discharge_saved + pv_saved
+            gesamt = haus + auto_sav
+            if auto_kwh > 0:
+                auto_txt = (f"Auto (Netzstrom laut Tibber, Monat): {auto_kwh:.1f} kWh, bezahlt im Schnitt {auto_ist:.3f} EUR/kWh. "
+                            f"Vergleich: Ø-Preis 14-15 Uhr {auto_vgl:.3f} EUR/kWh. "
+                            f"Auto-Ersparnis: {auto_sav:.2f} EUR (negativ = teurer als beim Anstecken). ")
+            else:
+                auto_txt = "Auto: keine Daten. "
             prompt = (
-                f"Smart Home Energieberater: Netzkosten: {cost:.2f} EUR. "
-                f"Ersparnis Entladen + PV-Direkt: {total_saved:.2f} EUR (Entladen: {discharge_saved:.2f} EUR, PV-Direkt: {pv_saved:.2f} EUR). "
-                f"Geladene Netz-Energie (Akku): {kwh:.2f} kWh. Ø-Speicher-Einkaufspreis: {self._battery_avg_buy_price:.3f} EUR. "
-                "Gib eine kurze, prägnante Einschätzung (1-2 Sätze) für den Hausbesitzer."
+                "Smart-Home-Energieberater für ein Haus mit Hausakku, PV und E-Auto. "
+                "Schreibe sachlich und ohne Dringlichkeit. Kleine positive Beträge einordnen, nichts dramatisieren. "
+                f"Netzkosten gesamt (Haus und Auto) im Monat: {cost:.2f} EUR. "
+                f"Haus-Ersparnis: {haus:.2f} EUR (Entladen-Gewinn {discharge_saved:.2f} EUR, PV-Direkt {pv_saved:.2f} EUR). "
+                f"{auto_txt}"
+                f"Gesamtersparnis Haus und Auto: {gesamt:.2f} EUR. "
+                f"Durchschnittlicher Einstand des Akkus: {self._battery_avg_buy_price:.3f} EUR/kWh (PV-Strom mit 8 ct gerechnet). "
+                "Gib eine kurze Einschätzung in 1-2 Sätzen und höchstens einen konkreten Verbesserungsvorschlag. Verwende nur die genannten Zahlen."
             )
             payload = {"contents": [{"parts": [{"text": prompt}]}]}
             headers = {"Content-Type": "application/json", "x-goog-api-key": self.gemini_api_key}
